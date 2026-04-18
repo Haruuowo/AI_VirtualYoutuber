@@ -2,10 +2,12 @@
 
 A chaotic, funny AI VTuber that responds to live chat on Twitch and TikTok simultaneously.
 
+**Repository:** [https://github.com/Haruuowo/AI_VirtualYoutuber](https://github.com/Haruuowo/AI_VirtualYoutuber)
+
 ## Setup
 
 1. **Clone or download this repository.**
-   - If using Git: `git clone <your-repo-url>`
+   - If using Git: `git clone https://github.com/Haruuowo/AI_VirtualYoutuber.git`
 
 2. **Install dependencies:**
    ```
