@@ -1,0 +1,7 @@
+twitchio
+TikTokLive
+anthropic
+elevenlabs
+pygame
+python-dotenv
+asyncio
