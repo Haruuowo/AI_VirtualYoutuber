@@ -5,6 +5,7 @@ A chaotic, funny AI VTuber that responds to live chat on Twitch and TikTok simul
 ## Setup
 
 1. **Clone or download this repository.**
+   - If using Git: `git clone <your-repo-url>`
 
 2. **Install dependencies:**
    ```
