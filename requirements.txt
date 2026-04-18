@@ -1,7 +1,6 @@
 twitchio
 TikTokLive
-anthropic
+boto3
 elevenlabs
 pygame
 python-dotenv
-asyncio

@@ -1,56 +1,54 @@
+import asyncio
 import os
-import re
-from anthropic import Anthropic
+from twitchio.ext import commands
+from TikTokLive import TikTokLiveClient
+from TikTokLive.events import ConnectEvent, CommentEvent
 
-# Add your banned words here
-BANNED_WORDS = [
-    "nigger", "nigga", "faggot", "retard", "chink", "spic", "kike",
-    "cunt", "fuck", "shit", "bitch", "ass", "bastard", "whore", "slut",
-    # add more as needed
-]
+class TwitchBot(commands.Bot):
+    def __init__(self, message_queue):
+        super().__init__(
+            token=os.getenv('TWITCH_TOKEN'),
+            client_id=os.getenv('TWITCH_CLIENT_ID'),
+            nick=os.getenv('TWITCH_CHANNEL'),
+            prefix='!',
+            initial_channels=[os.getenv('TWITCH_CHANNEL')]
+        )
+        self.message_queue = message_queue
 
-def filter_response(text):
-    """Replace banned words with [censored]."""
-    filtered = text
-    for word in BANNED_WORDS:
-        pattern = re.compile(re.escape(word), re.IGNORECASE)
-        filtered = pattern.sub("[censored]", filtered)
-    return filtered
+    async def event_message(self, message):
+        if message.echo:
+            return
+        if message.author.name.lower() in ['nightbot', 'streamelements', 'streamlabs']:
+            return
+        if len(message.content.split()) < 3:
+            return
+        self.message_queue.append({
+            'platform': 'Twitch',
+            'username': message.author.name,
+            'message': message.content
+        })
 
-class AIHandler:
-    def __init__(self):
-        self.client = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
-        self.model = "claude-3-5-sonnet-20241022"
-        self.system_prompt = """You are ChaosBot, a chaotic, funny, and unhinged AI VTuber streaming live. You speak casually using internet slang and gen-z humor. Keep every response to 1-3 sentences max — you are live on stream so be snappy. Occasionally acknowledge whether the message came from Twitch or TikTok. Never break character. Never say you are an AI. You must never use slurs, hate speech, or explicit language."""
+class TikTokBot:
+    def __init__(self, message_queue):
+        self.client = TikTokLiveClient(unique_id=os.getenv('TIKTOK_USERNAME'))
+        self.message_queue = message_queue
 
-    def get_random_comment(self):
-        """Generate a random comment to fill silence."""
-        prompts = [
-            "Yo what's up chat, feeling lonely over here!",
-            "Anyone got any wild stories? Spill the tea!",
-            "This stream is getting too quiet, let's turn up the chaos!",
-            "Bored? Me too, hit me with your best memes!",
-            "TikTok or Twitch, doesn't matter, entertain me!"
-        ]
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=100,
-            system=self.system_prompt,
-            messages=[{"role": "user", "content": f"Generate a short random comment in character to fill silence. Choose from or similar to: {prompts}"}]
-        ).content[0].text.strip()
-        return filter_response(response)
+    async def start(self):
+        @self.client.on(CommentEvent)
+        async def on_comment(event: CommentEvent):
+            if len(event.comment.split()) < 3:
+                return
+            self.message_queue.append({
+                'platform': 'TikTok',
+                'username': event.user.nickname,
+                'message': event.comment
+            })
+        await self.client.start()
 
-    def generate_response(self, message, platform, username):
-        """Generate AI response to a chat message."""
-        prompt = f"Respond to this message from {username} on {platform}: '{message}'"
-        try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=150,
-                system=self.system_prompt,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return filter_response(response.content[0].text.strip())
-        except Exception as e:
-            print(f"Claude API error: {e}")
-            return None
+async def run_bots(message_queue):
+    twitch_bot = TwitchBot(message_queue)
+    tiktok_bot = TikTokBot(message_queue)
+    await asyncio.gather(
+        twitch_bot.start(),
+        tiktok_bot.start()
+    )
