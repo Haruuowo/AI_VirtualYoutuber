@@ -1,6 +1,9 @@
-twitchio
+websockets
 TikTokLive
-boto3
-elevenlabs
-pygame
+groq
+edge-tts
+sounddevice
+soundfile
 python-dotenv
+speechrecognition
+pyaudio

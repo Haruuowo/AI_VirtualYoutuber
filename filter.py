@@ -1,4 +1,3 @@
-from filter import filter_response
 import re
 
 BANNED_WORDS = [
