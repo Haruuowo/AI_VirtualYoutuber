@@ -1,15 +1,17 @@
 import os
-import asyncio
 import sounddevice as sd
 import soundfile as sf
-import edge_tts
 import speech_recognition as sr
 
 class VoiceHandler:
     def __init__(self):
-        self.audio_device = os.getenv('AUDIO_DEVICE')
+        self.audio_device = os.getenv('AUDIO_DEVICE', '').strip()
+        self.elevenlabs_key = os.getenv('ELEVENLABS_API_KEY', '').strip()
+        self.voice_id = os.getenv('ELEVENLABS_VOICE_ID', '').strip()
+        self.tts_engine = os.getenv('TTS_ENGINE', 'edge').lower().strip()
+        self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AnaNeural').strip()
         self.device_id = None
-        self.voice = "en-US-AnaNeural"
+        self.is_speaking = False
         self.recognizer = sr.Recognizer()
 
     def set_audio_device(self):
@@ -24,31 +26,67 @@ class VoiceHandler:
 
     async def generate_and_play_audio(self, text):
         try:
-            temp_file = "temp_audio.mp3"
-            communicate = edge_tts.Communicate(text, self.voice)
-            await communicate.save(temp_file)
-            data, samplerate = sf.read(temp_file)
-            sd.play(data, samplerate, device=self.device_id)
-            sd.wait()
-            os.remove(temp_file)
+            self.is_speaking = True
+            if self.tts_engine == 'elevenlabs' and self.elevenlabs_key and self.voice_id:
+                success = await self._play_elevenlabs(text)
+                if not success:
+                    print("ElevenLabs failed, falling back to edge-tts...")
+                    await self._play_edge_tts(text)
+            else:
+                await self._play_edge_tts(text)
         except Exception as e:
             print(f"Audio error: {e}")
+        finally:
+            self.is_speaking = False
+
+    async def _play_elevenlabs(self, text):
+        try:
+            from elevenlabs.client import ElevenLabs
+            import asyncio
+
+            client = ElevenLabs(api_key=self.elevenlabs_key)
+            
+            audio = await asyncio.to_thread(
+                client.text_to_speech.convert,
+                voice_id=self.voice_id,
+                text=text,
+                model_id="eleven_turbo_v2",
+                voice_settings={
+                    "stability": 0.4,
+                    "similarity_boost": 0.8,
+                    "style": 0.5,
+                    "use_speaker_boost": True
+                }
+            )
+
+            with open("temp_audio.mp3", "wb") as f:
+                for chunk in audio:
+                    f.write(chunk)
+
+            data, samplerate = sf.read("temp_audio.mp3")
+            sd.play(data, samplerate, device=self.device_id)
+            sd.wait()
+            os.remove("temp_audio.mp3")
+            return True
+
+        except Exception as e:
+            print(f"ElevenLabs error: {e}")
+            return False
+
+    async def _play_edge_tts(self, text):
+        import edge_tts
+        communicate = edge_tts.Communicate(text, self.edge_voice)
+        await communicate.save("temp_audio.mp3")
+        data, samplerate = sf.read("temp_audio.mp3")
+        sd.play(data, samplerate, device=self.device_id)
+        sd.wait()
+        os.remove("temp_audio.mp3")
 
     def listen_for_speech(self):
-        """Listen for speech and return recognized text."""
         try:
             with sr.Microphone() as source:
-                print("Listening...")
                 self.recognizer.adjust_for_ambient_noise(source)
                 audio = self.recognizer.listen(source, timeout=5)
-                text = self.recognizer.recognize_google(audio)
-                print(f"Heard: {text}")
-                return text
-        except sr.WaitTimeoutError:
-            return None
-        except sr.UnknownValueError:
-            print("Could not understand audio")
-            return None
-        except sr.RequestError as e:
-            print(f"Speech recognition error: {e}")
+                return self.recognizer.recognize_google(audio)
+        except Exception:
             return None

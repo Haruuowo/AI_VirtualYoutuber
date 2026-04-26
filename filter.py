@@ -2,7 +2,7 @@ import re
 
 BANNED_WORDS = [
     "nigger", "nigga", "faggot", "retard", "chink", "spic", "kike",
-    "cunt", "fuck", "shit", "bitch", "ass", "bastard", "whore", "slut",
+    "cunt", "fuck", "shit", "bitch", "bastard", "whore", "slut",
     # add more as needed
 ]
 
