@@ -1,9 +1,11 @@
 websockets
 TikTokLive
 groq
+elevenlabs
 edge-tts
 sounddevice
 soundfile
+httpx
 python-dotenv
 speechrecognition
 pyaudio

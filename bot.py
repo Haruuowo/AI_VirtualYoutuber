@@ -122,11 +122,13 @@ class TikTokBot:
                 'username': event.user.nickname,
                 'message': event.comment
             })
-        
-        try:
-            await self.client.start()
-        except Exception as e:
-            print(f"TikTok Error: {e}")
+
+        while True:
+            try:
+                await self.client.start()
+            except Exception as e:
+                print(f"TikTok Error: {e} — retrying in 10 seconds...")
+                await asyncio.sleep(10)
 
 async def run_bots(message_queue, voice_handler):
     tasks = []
@@ -141,5 +143,4 @@ async def run_bots(message_queue, voice_handler):
     tiktok_bot = TikTokBot(message_queue)
     tasks.append(tiktok_bot.start())
 
-    await asyncio.gather(*tasks)
-
+    await asyncio.gather(*tasks)    

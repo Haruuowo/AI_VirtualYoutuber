@@ -1,6 +1,7 @@
 import sys
-import asyncio  
+import asyncio
 import os
+import random
 from collections import deque
 from dotenv import load_dotenv
 from bot import run_bots
@@ -16,57 +17,68 @@ async def main():
     ai_handler = AIHandler()
     voice_handler = VoiceHandler()
     voice_handler.set_audio_device()
-    
-    # Start the bots (Twitch, TikTok, Mic)
+
     bot_task = asyncio.create_task(run_bots(pending_messages, voice_handler))
     bot_task.add_done_callback(lambda t: print("Bot task ended:", t.exception() if t.exception() else "ok"))
-    
+
     last_response_time = asyncio.get_event_loop().time()
     last_incoming_time = asyncio.get_event_loop().time()
-    
+
     print("Luna is awake and listening...")
 
     while True:
         current_time = asyncio.get_event_loop().time()
-        
-        # 1. If there are messages in the queue AND Luna isn't currently speaking
+
         if pending_messages and not voice_handler.is_speaking:
             last_incoming_time = current_time
-            
-            # Get the oldest message (First In, First Out)
-            msg_data = pending_messages.popleft()
-            
-            print(f"Processing message from {msg_data['username']}...")
-            
-            # Generate the AI response
-            response = ai_handler.generate_response(
-                msg_data['message'], 
-                msg_data['platform'], 
-                msg_data['username']
-            )
-            
+
+            # wait briefly to collect messages that arrive close together
+            await asyncio.sleep(0.5)
+            batch = []
+            while pending_messages and len(batch) < 5:
+                batch.append(pending_messages.popleft())
+
+            # only skip single-word messages (hi, lol, ok, etc), and only 35% of the time
+            if len(batch) == 1:
+                words = batch[0]['message'].strip().split()
+                if len(words) <= 1 and random.random() < 0.35:
+                    print(f"[skip] {batch[0]['username']}: {batch[0]['message']}")
+                    await asyncio.sleep(0.1)
+                    continue
+
+            # respond to batch or single message
+            if len(batch) == 1:
+                response = ai_handler.generate_response(
+                    batch[0]['message'],
+                    batch[0]['platform'],
+                    batch[0]['username']
+                )
+            else:
+                response = ai_handler.generate_batch_response(batch)
+
             if response:
-                print(f"[{msg_data['platform']}] {msg_data['username']}: {response}")
-                # This will set voice_handler.is_speaking to True until finished
+                print(f"Luna: {response}")
                 await voice_handler.generate_and_play_audio(response)
                 last_response_time = current_time
-        
-        # 2. Random banter if it's been quiet for 45 seconds
+
+        # random banter after 45s silence
         elif current_time - last_incoming_time >= 45 and current_time - last_response_time >= 45:
             if not voice_handler.is_speaking:
-                random_comment = ai_handler.get_random_comment()
-                if random_comment:
-                    print(f"[AI] Luna (Banter): {random_comment}")
-                    await voice_handler.generate_and_play_audio(random_comment)
+                # 30% chance she continues her own last thought
+                if random.random() < 0.3:
+                    comment = ai_handler.continue_last_thought()
+                else:
+                    comment = ai_handler.get_random_comment()
+                if comment:
+                    print(f"[Luna banter]: {comment}")
+                    await voice_handler.generate_and_play_audio(comment)
                 last_response_time = current_time
-        
-        # Small sleep to prevent CPU spiking
+
         await asyncio.sleep(0.1)
 
 if __name__ == "__main__":
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
