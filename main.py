@@ -18,8 +18,17 @@ async def main():
     voice_handler = VoiceHandler()
     voice_handler.set_audio_device()
 
+    # Start Twitch / TikTok / Mic
     bot_task = asyncio.create_task(run_bots(pending_messages, voice_handler))
     bot_task.add_done_callback(lambda t: print("Bot task ended:", t.exception() if t.exception() else "ok"))
+
+    # Start Minecraft brain if enabled
+    if os.getenv('MINECRAFT_ENABLED', '').lower() == 'true':
+        from minecraft.minecraft import MinecraftBot
+        mc_brain = MinecraftBot(ai_handler, voice_handler)
+        mc_task = asyncio.create_task(mc_brain.start())
+        mc_task.add_done_callback(lambda t: print("Minecraft task ended:", t.exception() if t.exception() else "ok"))
+        print("Minecraft mode enabled")
 
     last_response_time = asyncio.get_event_loop().time()
     last_incoming_time = asyncio.get_event_loop().time()
@@ -32,13 +41,12 @@ async def main():
         if pending_messages and not voice_handler.is_speaking:
             last_incoming_time = current_time
 
-            # wait briefly to collect messages that arrive close together
             await asyncio.sleep(0.5)
             batch = []
             while pending_messages and len(batch) < 5:
                 batch.append(pending_messages.popleft())
 
-            # only skip single-word messages (hi, lol, ok, etc), and only 35% of the time
+            # skip single word messages 35% of the time
             if len(batch) == 1:
                 words = batch[0]['message'].strip().split()
                 if len(words) <= 1 and random.random() < 0.35:
@@ -46,7 +54,6 @@ async def main():
                     await asyncio.sleep(0.1)
                     continue
 
-            # respond to batch or single message
             if len(batch) == 1:
                 response = ai_handler.generate_response(
                     batch[0]['message'],
@@ -61,10 +68,8 @@ async def main():
                 await voice_handler.generate_and_play_audio(response)
                 last_response_time = current_time
 
-        # random banter after 45s silence
         elif current_time - last_incoming_time >= 45 and current_time - last_response_time >= 45:
             if not voice_handler.is_speaking:
-                # 30% chance she continues her own last thought
                 if random.random() < 0.3:
                     comment = ai_handler.continue_last_thought()
                 else:

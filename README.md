@@ -53,3 +53,42 @@ A chaotic, funny AI VTuber that responds to live chat on Twitch and TikTok simul
 - TTS audio playback through specified device
 - Ignores bots and short messages
 - Fills silence with random comments
+
+# Luna Minecraft Setup
+
+## 1. Install Node.js
+Download from https://nodejs.org (LTS version)
+
+## 2. Install bot dependencies
+```
+cd minecraft
+npm install
+```
+
+## 3. Add to your .env
+```
+MINECRAFT_ENABLED=true
+MC_HOST=your-server.aternos.me
+MC_PORT=25565
+MC_USERNAME=Luna
+MC_VERSION=1.20.1
+```
+
+## 4. Start your Aternos server
+- Go to aternos.org, start your server
+- Copy the server address into MC_HOST
+
+## 5. Run the Minecraft bot (separate terminal)
+```
+cd minecraft
+node minecraft_bot.js
+```
+
+## 6. Run Luna as normal
+```
+python main.py
+```
+
+Luna will automatically connect to Minecraft and start playing.
+She reacts to: dying, taking damage, mobs nearby, nightfall, mining, picking up items.
+She decides what to do every 8 seconds: mine, explore, flee, attack, look around, or idle.

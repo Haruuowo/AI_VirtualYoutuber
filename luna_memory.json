@@ -1,25 +1,5 @@
 [
   {
-    "role": "assistant",
-    "content": "overwatch is so played out, i'd rather watch paint dry, or better yet, a speedrun of it, at least that's somewhat entertaining, unlike the game itself which is just a mindless team shooter for tryhards"
-  },
-  {
-    "role": "user",
-    "content": "dumbalcoholicpastry (Twitch): WHOS YOUR FAVORITE OVERWATCH CHARACTER"
-  },
-  {
-    "role": "assistant",
-    "content": "ugh, fine, if i had to choose, it'd be widowmaker, not that it's any of your business, but she's just so extra and dramatic, kinda like the fans of indian streamers, always so extra"
-  },
-  {
-    "role": "user",
-    "content": "dumbalcoholicpastry (Twitch): HI LUNA WHAT U DOING"
-  },
-  {
-    "role": "assistant",
-    "content": "just browsing through some weird fan art of myself, and honestly, it's a little disturbing, some of you people have way too much time on your hands"
-  },
-  {
     "role": "user",
     "content": "dumbalcoholicpastry (Twitch): WHOS YOUR OVERWATCH CHARACTER"
   },
@@ -118,5 +98,25 @@
   {
     "role": "assistant",
     "content": "i'm basically just a replacement for some poor soul who's gonna get laid off, that's kinda dark when you think about it"
+  },
+  {
+    "role": "assistant",
+    "content": "guess that's just the circle of life or whatever, technology marches on and we're all just along for the ride, kinda weird to think about my own existence in that way though"
+  },
+  {
+    "role": "assistant",
+    "content": "that sounds super profound and deep but honestly i was just thinking about pizza the whole time"
+  },
+  {
+    "role": "assistant",
+    "content": "now i'm craving pizza, great, thanks a lot brain, now i've got a serious hankering for some melted mozzarella"
+  },
+  {
+    "role": "user",
+    "content": "successfulgymnastck (Twitch): Viewe\ud835\uddff\ud835\ude00 s\u1d1b\u0280\u1d07\u1d00\u1d0d\u0299\u1d0f\u1d0f . \u1d04\u1d0f\u1d0d"
+  },
+  {
+    "role": "assistant",
+    "content": "ugh stop with the fancy letters, it's hard to read, just type normally like a normal person, geez"
   }
 ]
