@@ -5,16 +5,26 @@ import os
 import json
 from pathlib import Path
 from datetime import datetime
-from groq import Groq
+from openai import OpenAI
 from filter import filter_response
 
 MEMORY_FILE = "luna_memory.json"
 LONGTERM_FILE = "luna_longterm.json"
 
+LLM_PROVIDERS = {
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1",   "key_env": "OPENROUTER_API_KEY", "default_model": "deepseek/deepseek-v4-flash"},
+    "deepseek":   {"base_url": "https://api.deepseek.com/v1",    "key_env": "DEEPSEEK_API_KEY",   "default_model": "deepseek-chat"},
+    "groq":       {"base_url": "https://api.groq.com/openai/v1",  "key_env": "GROQ_API_KEY",       "default_model": "llama-3.3-70b-versatile"},
+}
+
 class AIHandler:
     def __init__(self):
-        self.client = Groq(api_key=os.getenv('GROQ_API_KEY'))
-        self.model = "llama-3.3-70b-versatile"
+        provider_name = os.getenv('LLM_PROVIDER', 'groq').lower().strip()
+        provider = LLM_PROVIDERS.get(provider_name, LLM_PROVIDERS["groq"])
+        api_key = os.getenv(provider["key_env"], "")
+        self.client = OpenAI(api_key=api_key, base_url=provider["base_url"])
+        self.model = os.getenv('LLM_MODEL', '').strip() or provider["default_model"]
+        print(f"[LLM] provider={provider_name} model={self.model}")
 
         self.memory = deque(self._load_short_term(), maxlen=30)
         self.longterm = self._load_long_term()
@@ -28,6 +38,17 @@ you're funny, reactive, and unpredictable. you talk like a real person — casua
 - vary your response length naturally — sometimes just 2-3 words, sometimes a full sentence or two, never more than 2 sentences
 - never start two responses the same way
 - never repeat a joke or reaction you already used"""
+
+        if os.getenv("JAPANESE_MODE", "").lower() == "true":
+            self.japanese_mode = True
+            self.system_prompt += (
+                "\n\nIMPORTANT: respond ONLY with a JSON object. "
+                'Use this exact shape: {"en":"<english>","ja":"<japanese>"}. '
+                "Both fields must carry the same meaning and tone."
+            )
+        else:
+            self.japanese_mode = False
+        self.max_tokens = 250 if self.japanese_mode else 200
 
         self.moods = (
             [
@@ -158,6 +179,22 @@ Reply with just the new user fact in one sentence, or NOTHING.
             messages.append(msg)
         return messages
 
+    def split_response(self, text):
+        if not self.japanese_mode:
+            return text, text
+        try:
+            obj = json.loads(text.strip().strip("`"))
+            return obj.get("en", text), obj.get("ja", text)
+        except Exception:
+            return text, None
+
+    def list_models(self):
+        try:
+            return [m.id for m in self.client.models.list()]
+        except Exception as e:
+            print(f"Failed to fetch models: {e}")
+            return []
+
     # ── Core methods ─────────────────────────────────────────────
 
     def generate_response(self, message, platform, username):
@@ -171,14 +208,18 @@ Reply with just the new user fact in one sentence, or NOTHING.
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=150,
+                max_tokens=self.max_tokens,
                 temperature=0.9,
                 messages=self._build_messages(full_system)
             )
             ai_text = response.choices[0].message.content.strip()
             filtered = filter_response(ai_text)
 
-            self.memory.append({"role": "assistant", "content": filtered})
+            if self.japanese_mode:
+                display, _ = self.split_response(filtered)
+                self.memory.append({"role": "assistant", "content": display})
+            else:
+                self.memory.append({"role": "assistant", "content": filtered})
             self._save_short_term()
 
             threading.Thread(
@@ -208,14 +249,18 @@ Reply with just the new user fact in one sentence, or NOTHING.
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=150,
+                max_tokens=self.max_tokens,
                 temperature=0.9,
                 messages=self._build_messages(full_system) + [{"role": "user", "content": prompt}]
             )
             ai_text = response.choices[0].message.content.strip()
             filtered = filter_response(ai_text)
 
-            self.memory.append({"role": "assistant", "content": filtered})
+            if self.japanese_mode:
+                display, _ = self.split_response(filtered)
+                self.memory.append({"role": "assistant", "content": display})
+            else:
+                self.memory.append({"role": "assistant", "content": filtered})
             self._save_short_term()
             return filtered
         except Exception as e:

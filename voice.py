@@ -13,6 +13,11 @@ class VoiceHandler:
         self.tts_engine = os.getenv('TTS_ENGINE', 'edge').lower().strip()
         self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AriaNeural').strip()
         self.ref_audio_path = os.getenv('REF_AUDIO_PATH', '').strip()
+        self.qwen_tts_url = os.getenv('QWEN_TTS_URL', 'http://localhost:8880').strip()
+        self.qwen_tts_voice = os.getenv('QWEN_TTS_VOICE', 'Ryan').strip()
+        self.qwen_tts_lang = os.getenv('QWEN_TTS_LANGUAGE', 'English').strip()
+        self.qwen_tts_ref_audio = os.getenv('QWEN_TTS_REF_AUDIO', '').strip()
+        self.qwen_tts_ref_text = os.getenv('QWEN_TTS_REF_TEXT', '').strip()
         self.device_id = None
         self.is_speaking = False
 
@@ -33,6 +38,11 @@ class VoiceHandler:
                 success = await self._play_gptsovits(text)
                 if not success:
                     print("GPT-SoVITS failed, falling back to edge-tts...")
+                    await self._play_edge_tts(text)
+            elif self.tts_engine == 'qwen3tts':
+                success = await self._play_qwen3tts(text)
+                if not success:
+                    print("Qwen3-TTS failed, falling back to edge-tts...")
                     await self._play_edge_tts(text)
             elif self.tts_engine == 'elevenlabs' and self.elevenlabs_key and self.voice_id:
                 success = await self._play_elevenlabs(text)
@@ -68,6 +78,47 @@ class VoiceHandler:
             return True
         except Exception as e:
             print(f"GPT-SoVITS error: {e}")
+            return False
+
+    async def _play_qwen3tts(self, text):
+        try:
+            import httpx
+            if self.qwen_tts_ref_audio and self.qwen_tts_ref_text:
+                async with httpx.AsyncClient() as client:
+                    with open(self.qwen_tts_ref_audio, 'rb') as ref:
+                        response = await client.post(
+                            f"{self.qwen_tts_url}/v1/audio/speech/upload",
+                            files={"voice_file": ref},
+                            data={
+                                "model": "qwen3-tts",
+                                "voice": self.qwen_tts_voice,
+                                "input": text,
+                                "response_format": "wav",
+                                "ref_text": self.qwen_tts_ref_text,
+                                "language": self.qwen_tts_lang,
+                            },
+                            timeout=30
+                        )
+            else:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{self.qwen_tts_url}/v1/audio/speech",
+                        json={
+                            "model": "qwen3-tts",
+                            "voice": self.qwen_tts_voice,
+                            "input": text,
+                            "response_format": "wav",
+                            "language": self.qwen_tts_lang,
+                        },
+                        timeout=30
+                    )
+            response.raise_for_status()
+            data, samplerate = sf.read(io.BytesIO(response.content))
+            sd.play(data, samplerate, device=self.device_id)
+            sd.wait()
+            return True
+        except Exception as e:
+            print(f"Qwen3-TTS error: {e}")
             return False
 
     async def _play_elevenlabs(self, text):

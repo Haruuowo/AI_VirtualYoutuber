@@ -59,15 +59,17 @@ class MinecraftBot:
                     if ev_type in REACTIVE_EVENTS:
                         comment = REACTIVE_EVENTS[ev_type](ev_data)
                         print(f"[MC Event Reaction] Luna: {comment}")
-                        
+
                         # Generate reaction prompt for personality consistency
                         prompt = f"react to this situation that just happened in minecraft: {comment}. keep it very short and casual."
                         reaction = self.ai.generate_response(prompt, 'Minecraft', 'event')
-                        
+
                         if reaction and not self.voice.is_speaking:
-                            await self.voice.generate_and_play_audio(reaction)
-                            # Post the text back into the server chat
-                            await client.post(f"{BRIDGE_URL}/action", json={'action': 'chat', 'params': {'message': reaction}})
+                            display, speech = self.ai.split_response(reaction)
+                            if speech is not None:
+                                await self.voice.generate_and_play_audio(speech)
+                            # Post English display to in-game chat, not Japanese
+                            await client.post(f"{BRIDGE_URL}/action", json={'action': 'chat', 'params': {'message': display}})
                             break # Only react to one major thing per tick
                             
             except Exception as e:
@@ -109,14 +111,17 @@ class MinecraftBot:
         if not response:
             return
 
-        # Parse action from response string
-        action = _parse_action(response)
-        print(f"[MC decision] {response} → {action}")
+        # Split into English display text + Japanese speech text
+        display, speech = self.ai.split_response(response)
 
-        # Say what she's doing out loud
+        # Parse action from English display text, NOT raw JSON
+        action = _parse_action(display)
+        print(f"[MC decision] {display} → {action}")
+
+        # Print English, TTS Japanese if available
         if not self.voice.is_speaking:
-            reason_text = response.split('|')[1].replace('REASON:', '').strip() if '|' in response else response
-            await self.voice.generate_and_play_audio(reason_text)
+            if speech is not None:
+                await self.voice.generate_and_play_audio(speech)
 
         # Send action down to Node.js express bridge securely with explicit empty params object
         async with httpx.AsyncClient() as client:

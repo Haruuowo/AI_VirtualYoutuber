@@ -64,8 +64,10 @@ async def main():
                 response = ai_handler.generate_batch_response(batch)
 
             if response:
-                print(f"Luna: {response}")
-                await voice_handler.generate_and_play_audio(response)
+                display, speech = ai_handler.split_response(response)
+                print(f"Luna: {display}")
+                if speech is not None:
+                    await voice_handler.generate_and_play_audio(speech)
                 last_response_time = current_time
 
         elif current_time - last_incoming_time >= 45 and current_time - last_response_time >= 45:
@@ -75,8 +77,10 @@ async def main():
                 else:
                     comment = ai_handler.get_random_comment()
                 if comment:
-                    print(f"[Luna banter]: {comment}")
-                    await voice_handler.generate_and_play_audio(comment)
+                    display, speech = ai_handler.split_response(comment)
+                    print(f"[Luna banter]: {display}")
+                    if speech is not None:
+                        await voice_handler.generate_and_play_audio(speech)
                 last_response_time = current_time
 
         await asyncio.sleep(0.1)

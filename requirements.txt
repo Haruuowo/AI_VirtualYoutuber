@@ -1,6 +1,7 @@
 websockets
 TikTokLive
 groq
+openai
 elevenlabs
 edge-tts
 sounddevice
