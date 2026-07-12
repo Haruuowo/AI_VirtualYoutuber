@@ -76,7 +76,7 @@ class MinecraftBot:
                 pass # Silent fallback if connection drops briefly
 
     async def _think_and_act(self):
-        """Get current state, let Groq decide an action, and send it down to the body."""
+        """Get current state, let the LLM decide an action, and send it down to the body."""
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(f"{BRIDGE_URL}/state", timeout=2)

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Luna Studio</title>
+    <link rel="stylesheet" href="/web/styles.css">
+    <!-- pixi.js v7 + pixi-live2d-display via CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.3.3/dist/pixi.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/index.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- AVATAR PANE -->
+        <section id="avatar-pane">
+            <canvas id="avatar-canvas"></canvas>
+            <div id="avatar-placeholder" class="hidden">
+                <div class="ph-silhouette"></div>
+                <p>No Live2D model in <code>web/assets/</code></p>
+                <p class="hint">Drop your <code>*.model3.json</code> + <code>.moc3</code> + textures there, then press <kbd>Ctrl+R</kbd></p>
+            </div>
+        </section>
+
+        <!-- CHAT PANE -->
+        <section id="chat-pane">
+            <header id="chat-header">
+                <h2>Luna Chat</h2>
+                <span id="ws-status" class="ws-disconnected" title="WebSocket connection state">●</span>
+            </header>
+            <div id="chat-scrollback"></div>
+            <footer id="chat-input-bar">
+                <input id="chat-username" type="text" placeholder="Your name" maxlength="24" value="You">
+                <input id="chat-input" type="text" placeholder="Say something to Luna…" maxlength="500" autocomplete="off">
+                <button id="chat-send">Send</button>
+            </footer>
+        </section>
+
+        <!-- DEBUG/STATS BAR -->
+        <section id="stats-bar">
+            <div class="stat"><span class="label">provider</span><span id="stat-provider" class="value">—</span></div>
+            <div class="stat"><span class="label">model</span><span id="stat-model" class="value">—</span></div>
+            <div class="stat"><span class="label">tts</span><span id="stat-tts" class="value">—</span></div>
+            <div class="stat"><span class="label">speaking</span><span id="stat-speaking" class="value">false</span></div>
+            <div class="stat"><span class="label">queue</span><span id="stat-queue" class="value">0</span></div>
+            <div class="stat"><span class="label">latency</span><span id="stat-latency" class="value">—</span></div>
+            <div class="stat"><span class="label">total</span><span id="stat-total" class="value">0</span></div>
+            <div class="stat"><span class="label">idle</span><span id="stat-idle" class="value">—</span></div>
+            <div class="stat"><span class="label">vram</span><span id="stat-vram" class="value">—</span></div>
+            <div class="stat-actions">
+                <button id="btn-settings">⚙ Settings</button>
+                <button id="btn-reload" title="Reload page">⟳</button>
+            </div>
+        </section>
+    </div>
+
+    <!-- SETTINGS MODAL -->
+    <dialog id="settings-modal">
+        <form id="settings-form" method="dialog">
+            <header>
+                <h2>Settings</h2>
+                <button type="button" id="settings-close" class="close-btn">×</button>
+            </header>
+            <div class="settings-grid">
+                <fieldset>
+                    <legend>LLM Provider</legend>
+                    <label><input type="radio" name="llm_provider" value="openrouter"> OpenRouter</label>
+                    <label><input type="radio" name="llm_provider" value="deepseek"> DeepSeek</label>
+                    <label><input type="radio" name="llm_provider" value="groq"> Groq (legacy)</label>
+                </fieldset>
+
+                <fieldset>
+                    <legend>LLM Model</legend>
+                    <input type="text" name="llm_model" id="llm_model_input" placeholder="deepseek/deepseek-v4-flash" autocomplete="off">
+                    <button type="button" id="btn-fetch-models">Fetch models</button>
+                    <select id="llm_model_select" size="1" disabled>
+                        <option value="">— fetched models appear here —</option>
+                    </select>
+                </fieldset>
+
+                <fieldset>
+                    <legend>API Keys</legend>
+                    <label>OpenRouter
+                        <div class="key-row">
+                            <input type="password" name="openrouter_key" placeholder="sk-or-v1-…" autocomplete="off">
+                            <button type="button" class="toggle-key">show</button>
+                        </div>
+                    </label>
+                    <label>DeepSeek
+                        <div class="key-row">
+                            <input type="password" name="deepseek_key" placeholder="sk-…" autocomplete="off">
+                            <button type="button" class="toggle-key">show</button>
+                        </div>
+                    </label>
+                    <label>Groq
+                        <div class="key-row">
+                            <input type="password" name="groq_key" placeholder="gsk_…" autocomplete="off">
+                            <button type="button" class="toggle-key">show</button>
+                        </div>
+                    </label>
+                </fieldset>
+
+                <fieldset>
+                    <legend>TTS Engine</legend>
+                    <select name="tts_engine">
+                        <option value="edge">edge-tts (cloud, free)</option>
+                        <option value="qwen3tts">qwen3tts (local GPU :8880)</option>
+                        <option value="gptsovits">gptsovits (local :9880)</option>
+                        <option value="elevenlabs">elevenlabs (cloud BYOK)</option>
+                    </select>
+                    <label>Qwen3-TTS voice preset
+                        <select name="qwen_tts_voice">
+                            <option value="Ryan">Ryan (EN male)</option>
+                            <option value="Vivian">Vivian (ZH female)</option>
+                            <option value="Serena">Serena</option>
+                            <option value="Dylan">Dylan</option>
+                            <option value="Eric">Eric</option>
+                            <option value="Aiden">Aiden</option>
+                            <option value="Ono_Anna">Ono_Anna (JP female)</option>
+                            <option value="Sohee">Sohee</option>
+                            <option value="Uncle_Fu">Uncle_Fu</option>
+                        </select>
+                    </label>
+                    <label><input type="checkbox" name="japanese_mode" value="true"> JAPANESE_MODE (LLM emits {"en","ja"}, TTS speaks ja)</label>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Voice Cloning (Qwen3-TTS only)</legend>
+                    <label>Reference audio file
+                        <input type="file" id="ref_audio_file" accept=".wav,.mp3,.flac">
+                    </label>
+                    <label>Reference transcript
+                        <input type="text" name="qwen_tts_ref_text" placeholder="exact words spoken in the reference clip" autocomplete="off">
+                    </label>
+                    <p class="hint">Clear both fields to use the preset voice instead of cloning.</p>
+                </fieldset>
+
+                <fieldset id="memory-panel">
+                    <legend>Memory</legend>
+                    <div class="memory-section">
+                        <h4>Short-term (last 30)</h4>
+                        <ul id="mem-short"></ul>
+                    </div>
+                    <div class="memory-section">
+                        <h4>Long-term facts</h4>
+                        <ul id="mem-long"></ul>
+                    </div>
+                    <div class="memory-actions">
+                        <button type="button" id="btn-clear-short">Clear short-term</button>
+                        <button type="button" id="btn-clear-long">Clear long-term</button>
+                    </div>
+                </fieldset>
+            </div>
+            <footer>
+                <button type="button" id="settings-cancel">Cancel</button>
+                <button type="submit" id="settings-save">Save & reload handlers</button>
+            </footer>
+        </form>
+    </dialog>
+
+    <script src="/web/avatar.js" defer></script>
+    <script src="/web/app.js" defer></script>
+</body>
+</html>

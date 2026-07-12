@@ -1,0 +1,26 @@
+# Drop your Live2D model files here.
+#
+# Required:
+#   *.model3.json   (the manifest — main entry point)
+#   *.moc3          (the mesh)
+#   *.png           (textures, possibly multiple)
+#
+# Optional but recommended:
+#   *.physics3.json  (hair/cloth physics)
+#   *.motion3.json   (idle / tap motions)
+#   *.exp3.json      (expressions)
+#   *.cdi3.json      (parameter display info)
+#   *.pose3.json     (pose presets)
+#
+# The loader (web/avatar.js) looks for:
+#   web/assets/Luna.model3.json
+#   web/assets/luna.model3.json
+#   web/assets/model.model3.json
+#   web/assets/index.json   (an explicit manifest URL)
+# in that order. Rename your model's .model3.json to one of these
+# (Luna.model3.json is preferred), or create index.json with:
+#   { "url": "your-model.model3.json" }
+#
+# All model binaries (*.moc3, *.model3.json, *.png, *.physics3.json, etc.)
+# are .gitignored — they will NOT be committed. Only this .gitkeep is tracked
+# so the folder always exists in a fresh clone.

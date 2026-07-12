@@ -10,3 +10,7 @@ httpx
 python-dotenv
 speechrecognition
 pyaudio
+# Web Studio (only needed for --web / WEB_STUDIO=true mode)
+fastapi
+uvicorn[standard]
+python-multipart

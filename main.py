@@ -2,16 +2,41 @@ import sys
 import asyncio
 import os
 import random
+import argparse
 from collections import deque
 from dotenv import load_dotenv
-from bot import run_bots
 from ai import AIHandler
 from voice import VoiceHandler
 
-async def main():
+def _web_mode_enabled() -> bool:
+    """Check env or argparse flag for web studio mode."""
+    return os.getenv("WEB_STUDIO", "").lower() == "true"
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description="Luna AI VTuber")
+    parser.add_argument("--web", action="store_true",
+                        help="Launch the local Web Studio (FastAPI + browser UI) "
+                             "instead of the live Twitch/TikTok/Mic bot loop. "
+                             "Equivalent to setting WEB_STUDIO=true in .env.")
+    return parser.parse_args()
+
+def _load_env():
     cwd = os.path.dirname(os.path.abspath(__file__))
     env_path = os.path.join(cwd, '.env')
     load_dotenv(dotenv_path=env_path, override=True)
+
+async def main():
+    _load_env()
+
+    # Legacy live mode — import bot.py lazily so web-only users don't need
+    # pyaudio / TikTokLive installed
+    try:
+        from bot import run_bots
+    except ImportError as e:
+        print(f"Failed to import bot.py: {e}")
+        print("Tip: run with --web to use the Web Studio (no Twitch/TikTok/Mic deps),")
+        print("     or install the missing dependency: python -m pip install -r requirements.txt")
+        sys.exit(1)
 
     pending_messages = deque()
     ai_handler = AIHandler()
@@ -86,6 +111,18 @@ async def main():
         await asyncio.sleep(0.1)
 
 if __name__ == "__main__":
+    args = _parse_args()
+    _load_env()
+
+    if args.web or _web_mode_enabled():
+        # Web Studio mode — bypass bot.py (avoids requiring pyaudio /
+        # TikTokLive / websockets when only the web UI is needed).
+        # run_web_studio() calls uvicorn.run() which manages its own event
+        # loop, so it cannot be invoked from inside asyncio.run(main()).
+        from studio import run_web_studio
+        run_web_studio()
+        sys.exit(0)
+
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:

@@ -20,6 +20,10 @@ class VoiceHandler:
         self.qwen_tts_ref_text = os.getenv('QWEN_TTS_REF_TEXT', '').strip()
         self.device_id = None
         self.is_speaking = False
+        # Web Studio relay hook. When set (async callable taking WAV bytes +
+        # an engine_id string), _play_* methods stream audio to the browser
+        # instead of playing through the system sounddevice. Used by studio.py.
+        self.web_relay = None
 
     def set_audio_device(self):
         if self.audio_device:
@@ -72,6 +76,10 @@ class VoiceHandler:
                     },
                     timeout=30
                 )
+            response.raise_for_status()
+            if self.web_relay:
+                await self.web_relay(response.content, "gpts")
+                return True
             data, samplerate = sf.read(io.BytesIO(response.content))
             sd.play(data, samplerate, device=self.device_id)
             sd.wait()
@@ -113,6 +121,9 @@ class VoiceHandler:
                         timeout=30
                     )
             response.raise_for_status()
+            if self.web_relay:
+                await self.web_relay(response.content, "qwen")
+                return True
             data, samplerate = sf.read(io.BytesIO(response.content))
             sd.play(data, samplerate, device=self.device_id)
             sd.wait()
@@ -131,13 +142,19 @@ class VoiceHandler:
                 text=text,
                 model_id="eleven_turbo_v2",
             )
-            with open("temp_audio.mp3", "wb") as f:
-                for chunk in audio:
-                    f.write(chunk)
-            data, samplerate = sf.read("temp_audio.mp3")
+            buf = b"".join(chunk for chunk in audio)
+            tmp_path = "temp_audio.mp3"
+            with open(tmp_path, "wb") as f:
+                f.write(buf)
+            if self.web_relay:
+                # ElevenLabs returns mp3 — let the browser decode it
+                await self.web_relay(buf, "elev")
+                os.remove(tmp_path)
+                return True
+            data, samplerate = sf.read(tmp_path)
             sd.play(data, samplerate, device=self.device_id)
             sd.wait()
-            os.remove("temp_audio.mp3")
+            os.remove(tmp_path)
             return True
         except Exception as e:
             print(f"ElevenLabs error: {e}")
@@ -146,8 +163,16 @@ class VoiceHandler:
     async def _play_edge_tts(self, text):
         import edge_tts
         communicate = edge_tts.Communicate(text, self.edge_voice)
-        await communicate.save("temp_audio.mp3")
-        data, samplerate = sf.read("temp_audio.mp3")
+        tmp_path = "temp_audio.mp3"
+        await communicate.save(tmp_path)
+        with open(tmp_path, "rb") as f:
+            audio_bytes = f.read()
+        if self.web_relay:
+            # edge-tts emits mp3 — the browser decodes via AudioContext.decodeAudioData
+            await self.web_relay(audio_bytes, "edge")
+            os.remove(tmp_path)
+            return
+        data, samplerate = sf.read(tmp_path)
         sd.play(data, samplerate, device=self.device_id)
         sd.wait()
-        os.remove("temp_audio.mp3")
+        os.remove(tmp_path)

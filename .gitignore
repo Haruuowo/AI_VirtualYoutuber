@@ -23,4 +23,18 @@ Thumbs.db
 *.log
 
 # Temp files
-temp_audio.mp3.hermes/
+temp_audio.mp3
+
+# Hermes build artifacts
+.hermes/
+
+# Live2D model assets (drop your own .model3.json + .moc3 + textures here)
+# web/assets/  # NOTE: keep tracked so the folder exists, but ignore large model binaries
+web/assets/*.moc3
+web/assets/*.model3.json
+web/assets/*.png
+web/assets/*.physics3.json
+web/assets/*.cdi3.json
+web/assets/*.motion3.json
+web/assets/*.exp3.json
+web/assets/*.pose3.json

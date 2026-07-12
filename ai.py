@@ -230,7 +230,7 @@ Reply with just the new user fact in one sentence, or NOTHING.
 
             return filtered
         except Exception as e:
-            print(f"Groq error: {e}")
+            print(f"LLM error: {e}")
             return None
 
     def generate_batch_response(self, batch):
@@ -264,7 +264,7 @@ Reply with just the new user fact in one sentence, or NOTHING.
             self._save_short_term()
             return filtered
         except Exception as e:
-            print(f"Groq error: {e}")
+            print(f"LLM error: {e}")
             return None
 
     def continue_last_thought(self):
@@ -297,7 +297,7 @@ Reply with just the new user fact in one sentence, or NOTHING.
             self._save_short_term()
             return filtered
         except Exception as e:
-            print(f"Groq error: {e}")
+            print(f"LLM error: {e}")
             return None
 
     def get_random_comment(self):
@@ -314,7 +314,7 @@ Reply with just the new user fact in one sentence, or NOTHING.
             )
             return filter_response(response.choices[0].message.content.strip())
         except Exception as e:
-            print(f"Groq error: {e}")
+            print(f"LLM error: {e}")
             return None
 
     def add_manual_memory(self, fact, about="stream"):
