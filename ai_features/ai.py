@@ -1,11 +1,13 @@
 import os
 import random
+import asyncio
 from collections import deque
 from filter import filter_response
 
 class AIHandler:
-    def __init__(self, provider=None, model=None):
+    def __init__(self, provider=None, model=None, world_state=None):
         self.provider = (provider or os.getenv('AI_PROVIDER', 'ollama')).lower().strip()
+        self.world_state = world_state
         
         if self.provider == 'ollama':
             self.model = model or os.getenv('OLLAMA_MODEL', 'qwen2.5:7b')
@@ -20,12 +22,14 @@ class AIHandler:
         self.system_prompt = """you are luna, a chaotic, funny, and sarcastic ai vtuber streaming live to chat. you are not an ai assistant; you are a real streamer hanging out with your community.
 
 your character & gaming lore:
-- creator: kai created you, and you love teasing or roasting him.
+- players: kairuuowo is playing with you in the world. talk to whoever is talking to you (like wenphix or kairuuowo) and treat all players equally.
 - overwatch: you are an avid overwatch 2 player. you constantly claim you belong in grandmaster/top 500 (even if hardstuck). you hate sombra, mauga, and mei players with a passion. you rage about 'tank diff', 'support diff', and people who refuse to touch the payload or counterswap.
 - minecraft: you play minecraft autonomously, mine randomly, panic when creepers hiss, and yell when night falls.
 - streaming vibe: unhinged gamer girl energy, witty comebacks, confident roasts, but secretly loves hanging out with chat.
 
 strict output rules:
+- do NOT constantly mention or talk about kairuuowo or kai unprompted. only mention a person if they literally just spoke to you or if your reply is directly addressing them.
+- never prefix your response with your name or "luna:". speak your words directly.
 - never use asterisks, stage directions, or roleplay actions (do NOT say *sighs*, *giggles*, *laughs*, etc). speak your words directly.
 - never give dry 1-word dead ends (like 'nothing', 'no', 'hi'). always give a punchy comeback, counter-question, or funny thought.
 - keep replies short and conversational: 1 to 2 sentences max.
@@ -43,6 +47,10 @@ strict output rules:
             "chill and vibe-checking chat while cracking jokes"
         ]
 
+    def set_world_state(self, world_state):
+        """Attach or update the shared Minecraft world state."""
+        self.world_state = world_state
+
     # ── LLM Dispatch ─────────────────────────────────────────────
 
     def _call_llm(self, messages, max_tokens=120, temperature=0.85):
@@ -58,13 +66,38 @@ strict output rules:
             )
             return response['message']['content']
         else:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                messages=messages
-            )
-            return response.choices[0].message.content
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    messages=messages
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                err_str = str(e)
+                if '429' in err_str or 'rate_limit' in err_str:
+                    print(f"[AI Fallback] Groq rate limit hit. Seamlessly falling back to local Ollama...")
+                    try:
+                        import ollama
+                        resp = ollama.chat(
+                            model=os.getenv('OLLAMA_MODEL', 'llama3.2:3b'),
+                            messages=messages,
+                            options={"temperature": temperature, "num_predict": max_tokens}
+                        )
+                        return resp['message']['content']
+                    except Exception:
+                        pass
+                raise
+
+    def _build_system_prompt(self, mood: str) -> str:
+        """Constructs system prompt with current mood and live game context."""
+        prompt = f"{self.system_prompt}\n\n[current stream vibe: {mood}]"
+        if self.world_state:
+            game_context = self.world_state.get_prompt_context()
+            if game_context:
+                prompt += f"\n{game_context}"
+        return prompt
 
     def _build_messages(self, system):
         messages = [{"role": "system", "content": system}]
@@ -72,11 +105,11 @@ strict output rules:
             messages.append(msg)
         return messages
 
-    # ── Core Methods ─────────────────────────────────────────────
+    # ── Core Synchronous Methods ──────────────────────────────────
 
     def generate_response(self, message, platform, username):
         mood = random.choice(self.moods)
-        full_system = f"{self.system_prompt}\n\n[current stream vibe: {mood}]"
+        full_system = self._build_system_prompt(mood)
 
         self.memory.append({"role": "user", "content": f"{username} ({platform}): {message}"})
 
@@ -93,7 +126,7 @@ strict output rules:
     def generate_batch_response(self, batch):
         """React to multiple chatters at once."""
         mood = random.choice(self.moods)
-        full_system = f"{self.system_prompt}\n\n[current stream vibe: {mood}]"
+        full_system = self._build_system_prompt(mood)
 
         batch_text = "\n".join([f"{m['username']}: {m['message']}" for m in batch])
         prompt = f"multiple chatters said this at once:\n{batch_text}\nreact to the whole group in 1-2 punchy sentences."
@@ -116,7 +149,7 @@ strict output rules:
     def continue_last_thought(self):
         """Spontaneous streamer thought continuation."""
         mood = random.choice(self.moods)
-        full_system = f"{self.system_prompt}\n\n[current stream vibe: {mood}]"
+        full_system = self._build_system_prompt(mood)
 
         last = None
         for msg in reversed(list(self.memory)):
@@ -145,8 +178,9 @@ strict output rules:
     def get_random_comment(self):
         """Break the silence with random streamer commentary."""
         mood = random.choice(self.moods)
+        full_system = self._build_system_prompt(mood)
         messages = [
-            {"role": "system", "content": f"{self.system_prompt}\n\n[current stream vibe: {mood}]"},
+            {"role": "system", "content": full_system},
             {"role": "user", "content": "say something spontaneous, funny, or unhinged to chat about your games or stream in 1 sentence."}
         ]
 
@@ -156,3 +190,17 @@ strict output rules:
         except Exception as e:
             print(f"AI random comment error: {e}")
             return None
+
+    # ── Asynchronous Non-Blocking Wrappers ─────────────────────────
+
+    async def async_generate_response(self, message, platform, username):
+        return await asyncio.to_thread(self.generate_response, message, platform, username)
+
+    async def async_generate_batch_response(self, batch):
+        return await asyncio.to_thread(self.generate_batch_response, batch)
+
+    async def async_continue_last_thought(self):
+        return await asyncio.to_thread(self.continue_last_thought)
+
+    async def async_get_random_comment(self):
+        return await asyncio.to_thread(self.get_random_comment)

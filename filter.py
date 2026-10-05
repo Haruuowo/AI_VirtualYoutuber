@@ -6,24 +6,30 @@ BANNED_WORDS = [
 ]
 
 def filter_response(text):
-    """Clean stage directions, asterisks, and banned words for clean TTS."""
+    """Clean speaker prefixes, stage directions, asterisks, and banned words for clean TTS."""
     if not text:
         return ""
         
-    filtered = text
+    filtered = text.strip()
     
-    # 1. Remove stage directions / roleplay actions like *sighs*, *giggles*, [laughs], (screams)
+    # 1. Strip leading speaker labels like "Luna:", "Luna :", "Assistant:", "Bot:", "Luna -"
+    filtered = re.sub(r'^(luna|assistant|bot)\s*[:\-]\s*', '', filtered, flags=re.IGNORECASE)
+    
+    # Repeat in case there was "Luna: Luna:"
+    filtered = re.sub(r'^(luna|assistant|bot)\s*[:\-]\s*', '', filtered, flags=re.IGNORECASE)
+
+    # 2. Remove stage directions / roleplay actions like *sighs*, *giggles*, [laughs], (screams)
     filtered = re.sub(r'\*.*?\*', '', filtered)
     filtered = re.sub(r'\[.*?\]', '', filtered)
     filtered = re.sub(r'\(.*?\)', '', filtered)
     
-    # 2. Remove stray asterisks, quotes, or markdown artifacts
+    # 3. Remove stray asterisks, quotes, or markdown artifacts
     filtered = filtered.replace('*', '').replace('"', '').replace('`', '')
     
-    # 3. Clean up extra whitespace
+    # 4. Clean up extra whitespace
     filtered = re.sub(r'\s+', ' ', filtered).strip()
     
-    # 4. Filter banned slurs
+    # 5. Filter banned slurs
     for word in BANNED_WORDS:
         pattern = re.compile(rf'\b{re.escape(word)}\b', re.IGNORECASE)
         filtered = pattern.sub("", filtered)

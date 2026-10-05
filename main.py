@@ -1,84 +1,60 @@
 import sys
 import asyncio
 import os
-import random
-from collections import deque
 from dotenv import load_dotenv
+
+from core import WorldState, StreamDirector
 from bot import run_bots
 from ai import AIHandler
 from voice import VoiceHandler
+from minecraft.minecraft_controller import MinecraftController
 
 async def main():
     cwd = os.path.dirname(os.path.abspath(__file__))
     env_path = os.path.join(cwd, '.env')
     load_dotenv(dotenv_path=env_path, override=True)
 
-    pending_messages = deque()
-    ai_handler = AIHandler()
+    print("=" * 60)
+    print("        LUNA AI VTUBER - STREAM & MINECRAFT DIRECTOR")
+    print("=" * 60)
+
+    # 1. Initialize Shared World State & Persona Brain
+    world_state = WorldState()
+    ai_handler = AIHandler(world_state=world_state)
     voice_handler = VoiceHandler()
     voice_handler.set_audio_device()
 
-    # Start Twitch / TikTok / Mic
-    bot_task = asyncio.create_task(run_bots(pending_messages, voice_handler))
+    # 2. In-game Controller & Director
+    mc_controller = MinecraftController()
+    director = StreamDirector(
+        ai_handler=ai_handler,
+        voice_handler=voice_handler,
+        world_state=world_state,
+        mc_controller=mc_controller
+    )
+    director.start()
+
+    # 3. Start Chat & Voice Bots (Twitch, TikTok, Mic)
+    bot_task = asyncio.create_task(run_bots(director.pending_messages, voice_handler))
     bot_task.add_done_callback(lambda t: print("Bot task ended:", t.exception() if t.exception() else "ok"))
 
-    # Start Minecraft brain if enabled
+    # 4. Start Minecraft Autonomous Brain (if enabled)
     if os.getenv('MINECRAFT_ENABLED', '').lower() == 'true':
         from minecraft.minecraft import MinecraftBot
-        mc_brain = MinecraftBot(ai_handler, voice_handler)
+        mc_brain = MinecraftBot(director=director)
         mc_task = asyncio.create_task(mc_brain.start())
         mc_task.add_done_callback(lambda t: print("Minecraft task ended:", t.exception() if t.exception() else "ok"))
-        print("Minecraft mode enabled")
+        print("-> Minecraft autonomous mode active")
 
-    last_response_time = asyncio.get_event_loop().time()
-    last_incoming_time = asyncio.get_event_loop().time()
+    print("\nLuna is awake, listening to chat & watching Minecraft...")
+    print("-" * 60)
 
-    print("Luna is awake and listening...")
-
+    # 5. Main Director Loop
     while True:
-        current_time = asyncio.get_event_loop().time()
-
-        if pending_messages and not voice_handler.is_speaking:
-            last_incoming_time = current_time
-
-            await asyncio.sleep(0.5)
-            batch = []
-            while pending_messages and len(batch) < 5:
-                batch.append(pending_messages.popleft())
-
-            # skip single word messages 35% of the time
-            if len(batch) == 1:
-                words = batch[0]['message'].strip().split()
-                if len(words) <= 1 and random.random() < 0.35:
-                    print(f"[skip] {batch[0]['username']}: {batch[0]['message']}")
-                    await asyncio.sleep(0.1)
-                    continue
-
-            if len(batch) == 1:
-                response = ai_handler.generate_response(
-                    batch[0]['message'],
-                    batch[0]['platform'],
-                    batch[0]['username']
-                )
-            else:
-                response = ai_handler.generate_batch_response(batch)
-
-            if response:
-                print(f"Luna: {response}")
-                await voice_handler.generate_and_play_audio(response)
-                last_response_time = current_time
-
-        elif current_time - last_incoming_time >= 45 and current_time - last_response_time >= 45:
-            if not voice_handler.is_speaking:
-                if random.random() < 0.3:
-                    comment = ai_handler.continue_last_thought()
-                else:
-                    comment = ai_handler.get_random_comment()
-                if comment:
-                    print(f"[Luna banter]: {comment}")
-                    await voice_handler.generate_and_play_audio(comment)
-                last_response_time = current_time
-
+        try:
+            await director.process_chat_cycle()
+        except Exception as e:
+            print(f"[Director Loop Error]: {e}")
         await asyncio.sleep(0.1)
 
 if __name__ == "__main__":
@@ -87,4 +63,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Luna is going to sleep. Bye!")
+        print("\nLuna is going to sleep. Bye!")
