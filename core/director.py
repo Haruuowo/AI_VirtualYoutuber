@@ -93,7 +93,7 @@ class StreamDirector:
                     asyncio.create_task(self.mc_controller.send_action(action, params))
                     
                     # Luna dynamic AI reaction acknowledging the player by name
-                    ack_prompt = f"in-game player {user} just told you to in minecraft: \"{text}\". give a 1-sentence witty or funny streamer comeback to them."
+                    ack_prompt = f"in-game player {user} told you: \"{text}\". give a short, casual, funny gamer reply (1 sentence max). roast them if they are bossy or rude, or just say you're on it."
                     response = await self.ai.async_generate_response(ack_prompt, platform, user)
                 else:
                     # Full AI dynamic conversation addressing the player
@@ -143,12 +143,14 @@ class StreamDirector:
                 )
                 self.last_speech_time = current_time
 
-        # 3. Handle idle banter when chat is quiet for 45s (P4 Priority)
-        elif (current_time - self.last_incoming_time >= 45) and (current_time - self.last_speech_time >= 45):
-            if random.random() < 0.3:
+        # 3. Handle idle banter when chat is quiet for 90s (P4 Priority)
+        elif (current_time - self.last_incoming_time >= 90) and (current_time - self.last_speech_time >= 90):
+            if random.random() < 0.2:
                 comment = await self.ai.async_continue_last_thought()
-            else:
+            elif random.random() < 0.2:
                 comment = await self.ai.async_get_random_comment()
+            else:
+                comment = None
 
             if comment:
                 await self.speech_queue.enqueue(
