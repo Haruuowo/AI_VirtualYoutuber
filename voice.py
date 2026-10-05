@@ -1,9 +1,26 @@
 import os
 import asyncio
+import subprocess
 import sounddevice as sd
 import soundfile as sf
 import io
 import time
+
+FFMPEG = r"C:\Users\Worldwide\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMP_MP3 = os.path.join(BASE_DIR, "temp_audio.mp3")
+TEMP_WAV = os.path.join(BASE_DIR, "temp_audio.wav")
+
+def mp3_to_wav(mp3_path, wav_path):
+    """Convert MP3 to WAV using ffmpeg subprocess directly."""
+    if os.path.exists(wav_path):
+        os.remove(wav_path)
+    subprocess.run(
+        [FFMPEG, "-y", "-i", mp3_path, wav_path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True
+    )
 
 class VoiceHandler:
     def __init__(self):
@@ -80,23 +97,38 @@ class VoiceHandler:
                 text=text,
                 model_id="eleven_turbo_v2",
             )
-            with open("temp_audio.mp3", "wb") as f:
+            with open(TEMP_MP3, "wb") as f:
                 for chunk in audio:
                     f.write(chunk)
-            data, samplerate = sf.read("temp_audio.mp3")
+
+            await asyncio.to_thread(mp3_to_wav, TEMP_MP3, TEMP_WAV)
+
+            data, samplerate = sf.read(TEMP_WAV)
             sd.play(data, samplerate, device=self.device_id)
             sd.wait()
-            os.remove("temp_audio.mp3")
             return True
         except Exception as e:
             print(f"ElevenLabs error: {e}")
             return False
+        finally:
+            for p in [TEMP_MP3, TEMP_WAV]:
+                if os.path.exists(p):
+                    os.remove(p)
 
     async def _play_edge_tts(self, text):
-        import edge_tts
-        communicate = edge_tts.Communicate(text, self.edge_voice)
-        await communicate.save("temp_audio.mp3")
-        data, samplerate = sf.read("temp_audio.mp3")
-        sd.play(data, samplerate, device=self.device_id)
-        sd.wait()
-        os.remove("temp_audio.mp3")
+        try:
+            import edge_tts
+            communicate = edge_tts.Communicate(text, self.edge_voice)
+            await communicate.save(TEMP_MP3)
+
+            await asyncio.to_thread(mp3_to_wav, TEMP_MP3, TEMP_WAV)
+
+            data, samplerate = sf.read(TEMP_WAV)
+            sd.play(data, samplerate, device=self.device_id)
+            sd.wait()
+        except Exception as e:
+            print(f"edge-tts error: {e}")
+        finally:
+            for p in [TEMP_MP3, TEMP_WAV]:
+                if os.path.exists(p):
+                    os.remove(p)
