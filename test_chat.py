@@ -10,10 +10,10 @@ from voice import VoiceHandler
 
 def select_model():
     print("\nSelect Luna's Brain / Model:")
-    print("  [1] Ollama: qwen2.5:7b         (Recommended: Witty, funny banter, fits in 8GB VRAM)")
+    print("  [1] Ollama: qwen2.5:7b         (Recommended: Witty, best stream banter, fits 8GB VRAM)")
     print("  [2] Ollama: llama3.2:3b        (Ultra Fast: Near-instant replies)")
     print("  [3] Ollama: dolphin-llama3:8b  (Chaotic & Uncensored persona)")
-    print("  [4] Cloud: Groq (qwen3.8-27b)  (Zero local PC usage)")
+    print("  [4] Cloud: Groq (qwen3.8-27b)  (Cloud API)")
     
     choice = input("\nSelect model [1-4] (default is 1): ").strip()
     
@@ -58,9 +58,11 @@ async def run_interactive_test():
     print("\nLuna is live! Type anything to talk to her (type 'quit' to exit):")
     print("-" * 60)
     
+    loop = asyncio.get_event_loop()
     while True:
         try:
-            user_input = input("\nYou: ").strip()
+            user_input = await loop.run_in_executor(None, input, "\nYou: ")
+            user_input = user_input.strip()
             if not user_input:
                 continue
             if user_input.lower() in ('quit', 'exit', 'q'):
@@ -77,8 +79,13 @@ async def run_interactive_test():
         except (KeyboardInterrupt, EOFError):
             print("\nExiting test. Goodbye!")
             break
+        except asyncio.CancelledError:
+            break
 
 if __name__ == "__main__":
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(run_interactive_test())
+    try:
+        asyncio.run(run_interactive_test())
+    except KeyboardInterrupt:
+        print("\nLuna is going to sleep. Bye!")

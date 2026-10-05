@@ -1,14 +1,7 @@
-import threading
+import os
 import random
 from collections import deque
-import os
-import json
-from pathlib import Path
-from datetime import datetime
 from filter import filter_response
-
-MEMORY_FILE = "luna_memory.json"
-LONGTERM_FILE = "luna_longterm.json"
 
 class AIHandler:
     def __init__(self, provider=None, model=None):
@@ -21,37 +14,40 @@ class AIHandler:
             from groq import Groq
             self.client = Groq(api_key=os.getenv('GROQ_API_KEY'))
 
-        self.memory = deque(self._load_short_term(), maxlen=30)
-        self.longterm = self._load_long_term()
+        # Clean rolling in-memory context buffer (last 16 messages)
+        self.memory = deque(maxlen=16)
 
-        self.system_prompt = """you are luna, an entertaining, witty, and chaotic ai vtuber live on stream. you are talking directly to your chat and community.
+        self.system_prompt = """you are luna, a chaotic, funny, and sarcastic ai vtuber streaming live to chat. you are not an ai assistant; you are a real streamer hanging out with your community.
 
-personality & guidelines:
-- talk like a real streamer: casual, funny, expressive, spontaneous, and slightly unhinged.
-- never give dry, boring, or lazy 1-word replies (like 'nothing', 'no', 'hi'). always add a funny thought, playful reaction, or follow-up question.
-- keep responses punchy and conversational: 1 to 2 sentences max, but full of personality.
-- lowercase only, no asterisks, no emojis.
-- say "i dunno" instead of "idk".
-- use natural punctuation (!, ?, ..., commas) so your voice sounds alive, expressive, and full of emotion.
-- playfully tease or banter with chat, treat regular viewers like your chaotic stream buddies."""
+your character & gaming lore:
+- creator: kai created you, and you love teasing or roasting him.
+- overwatch: you are an avid overwatch 2 player. you constantly claim you belong in grandmaster/top 500 (even if hardstuck). you hate sombra, mauga, and mei players with a passion. you rage about 'tank diff', 'support diff', and people who refuse to touch the payload or counterswap.
+- minecraft: you play minecraft autonomously, mine randomly, panic when creepers hiss, and yell when night falls.
+- streaming vibe: unhinged gamer girl energy, witty comebacks, confident roasts, but secretly loves hanging out with chat.
+
+strict output rules:
+- never use asterisks, stage directions, or roleplay actions (do NOT say *sighs*, *giggles*, *laughs*, etc). speak your words directly.
+- never give dry 1-word dead ends (like 'nothing', 'no', 'hi'). always give a punchy comeback, counter-question, or funny thought.
+- keep replies short and conversational: 1 to 2 sentences max.
+- lowercase only, no emojis, no markdown.
+- say 'i dunno' instead of 'idk'.
+- use natural punctuation (!, ?, ..., commas) so your voice reads with emotion and inflection."""
 
         self.moods = [
-            "you are in a hyped, energetic mood and love teasing chat",
-            "you are feeling witty and have a funny, sarcastic comeback for everything",
-            "you are super curious, asking questions and getting chat involved",
-            "you are acting confidently wrong about something ridiculous and defending it",
-            "you think you are an absolute gaming and comedy prodigy right now",
-            "you are in a chaotic, goblin-mode mood bouncing between silly ideas",
-            "you are acting dramatically offended in a funny, playful way",
-            "you are feeling wholesome and happy to hang out with everyone",
+            "competitive gamer rage mode, talking trash and making excuses",
+            "hyper and bouncing between chaotic gaming takes",
+            "witty and roasting chat playfully with fast comebacks",
+            "acting super confident and bragging about nonexistent pro gamer skills",
+            "dramatically offended by chat in a funny way",
+            "curious and demanding chat explain their weird opinions",
+            "chill and vibe-checking chat while cracking jokes"
         ]
 
     # ── LLM Dispatch ─────────────────────────────────────────────
 
-    def _call_llm(self, messages, max_tokens=150, temperature=0.85):
+    def _call_llm(self, messages, max_tokens=120, temperature=0.85):
         if self.provider == 'ollama':
             import ollama
-            # format messages for ollama
             response = ollama.chat(
                 model=self.model,
                 messages=messages,
@@ -70,184 +66,57 @@ personality & guidelines:
             )
             return response.choices[0].message.content
 
-    # ── Persistence ──────────────────────────────────────────────
-
-    def _load_short_term(self):
-        if Path(MEMORY_FILE).exists():
-            try:
-                with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return []
-        return []
-
-    def _save_short_term(self):
-        try:
-            with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-                json.dump(list(self.memory), f, indent=2)
-        except Exception:
-            pass
-
-    def _load_long_term(self):
-        if Path(LONGTERM_FILE).exists():
-            try:
-                with open(LONGTERM_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return []
-        return []
-
-    def _save_long_term(self):
-        try:
-            with open(LONGTERM_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.longterm, f, indent=2)
-        except Exception:
-            pass
-
-    # ── Long-term memory ─────────────────────────────────────────
-
-    _USERNAME_NOISE = ("username is", "user's name is", "user is named", "goes by the name")
-
-    def _is_noise_fact(self, fact):
-        return any(phrase in fact.lower() for phrase in self._USERNAME_NOISE)
-
-    def _is_duplicate_fact(self, new_fact, username):
-        existing = [m["fact"].lower() for m in self.longterm if m.get("about") == username]
-        new_words = set(new_fact.lower().split())
-        for existing_fact in existing:
-            ex_words = set(existing_fact.split())
-            if not new_words or not ex_words:
-                continue
-            if len(new_words & ex_words) / len(new_words | ex_words) > 0.6:
-                return True
-        return False
-
-    def _extract_memory(self, username, message, response):
-        try:
-            existing_facts = [m["fact"] for m in self.longterm if m.get("about") == username]
-            already_known = ""
-            if existing_facts:
-                already_known = (
-                    f"\nAlready known about {username}:\n"
-                    + "\n".join(f"- {f}" for f in existing_facts[-10:]) + "\n"
-                )
-            extract_prompt = f"""Given this chat exchange, extract ONE short memorable fact about the USER only.
-Only extract real facts the USER shared about themselves (job, location, age, preferences, hobbies).
-Do NOT extract the user's username or display name.
-Do NOT extract facts about Luna's personality or behavior.
-Do NOT repeat or rephrase anything listed under "Already known".
-If nothing new and notable, reply with exactly: NOTHING
-{already_known}
-User ({username}): {message}
-Luna: {response}
-
-Reply with just the new user fact in one sentence, or NOTHING."""
-
-            messages = [{"role": "user", "content": extract_prompt}]
-            raw_fact = self._call_llm(messages, max_tokens=60, temperature=0.3)
-            fact = raw_fact.strip() if raw_fact else ""
-            if (fact and fact.upper() != "NOTHING"
-                    and not self._is_noise_fact(fact)
-                    and not self._is_duplicate_fact(fact, username)):
-                self.longterm.append({
-                    "fact": fact,
-                    "about": username,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
-                })
-                user_entries = [m for m in self.longterm if m.get("about") != "luna"]
-                luna_entries = [m for m in self.longterm if m.get("about") == "luna"]
-                if len(user_entries) > 300:
-                    user_entries = user_entries[-300:]
-                self.longterm = luna_entries + user_entries
-                self._save_long_term()
-        except Exception:
-            pass
-
-    def _get_relevant_memories(self, username, limit=5):
-        if not self.longterm:
-            return ""
-
-        luna_facts = [m for m in self.longterm if m.get("about") == "luna"]
-        user_facts = [m for m in self.longterm if m.get("about") == username]
-        other_facts = [m for m in self.longterm if m.get("about") not in ("luna", username)]
-
-        chosen_user = user_facts[-limit:]
-        remaining = limit - len(chosen_user)
-        chosen_others = other_facts[-remaining:] if remaining > 0 else []
-
-        result = ""
-        if luna_facts:
-            result += "\nABOUT LUNA:\n" + "\n".join(f"- {m['fact']}" for m in luna_facts) + "\n"
-        chat_facts = chosen_user + chosen_others
-        if chat_facts:
-            result += "\nTHINGS LUNA REMEMBERS:\n" + "\n".join(f"- {m['fact']} (re: {m['about']})" for m in chat_facts) + "\n"
-        return result
-
     def _build_messages(self, system):
         messages = [{"role": "system", "content": system}]
-        for msg in list(self.memory)[-10:]:
+        for msg in list(self.memory):
             messages.append(msg)
         return messages
 
-    # ── Core methods ─────────────────────────────────────────────
+    # ── Core Methods ─────────────────────────────────────────────
 
     def generate_response(self, message, platform, username):
-        memory_injection = self._get_relevant_memories(username)
         mood = random.choice(self.moods)
-        full_system = self.system_prompt + memory_injection + f"\ncurrent stream vibe: {mood}\n"
+        full_system = f"{self.system_prompt}\n\n[current stream vibe: {mood}]"
 
         self.memory.append({"role": "user", "content": f"{username} ({platform}): {message}"})
-        self._save_short_term()
 
         try:
-            raw_text = self._call_llm(self._build_messages(full_system), max_tokens=120, temperature=0.88)
+            raw_text = self._call_llm(self._build_messages(full_system), max_tokens=110, temperature=0.88)
             filtered = filter_response(raw_text.strip())
 
             self.memory.append({"role": "assistant", "content": filtered})
-            self._save_short_term()
-
-            threading.Thread(
-                target=self._extract_memory,
-                args=(username, message, filtered),
-                daemon=True
-            ).start()
-
             return filtered
         except Exception as e:
             print(f"AI generation error ({self.provider} / {self.model}): {e}")
             return None
 
     def generate_batch_response(self, batch):
-        """React to a batch of messages as a group instead of one by one."""
+        """React to multiple chatters at once."""
         mood = random.choice(self.moods)
-        memory_injection = self._get_relevant_memories(batch[0]['username'])
-        full_system = self.system_prompt + memory_injection + f"\ncurrent stream vibe: {mood}\n"
+        full_system = f"{self.system_prompt}\n\n[current stream vibe: {mood}]"
 
         batch_text = "\n".join([f"{m['username']}: {m['message']}" for m in batch])
-        prompt = f"multiple chatters said this at once:\n{batch_text}\nreact to chat as a group in 1-2 funny, energetic sentences."
+        prompt = f"multiple chatters said this at once:\n{batch_text}\nreact to the whole group in 1-2 punchy sentences."
 
         self.memory.append({"role": "user", "content": batch_text})
-        self._save_short_term()
 
         try:
             raw_text = self._call_llm(
                 self._build_messages(full_system) + [{"role": "user", "content": prompt}],
-                max_tokens=140,
+                max_tokens=120,
                 temperature=0.88
             )
             filtered = filter_response(raw_text.strip())
-
             self.memory.append({"role": "assistant", "content": filtered})
-            self._save_short_term()
             return filtered
         except Exception as e:
-            print(f"AI batch error ({self.provider} / {self.model}): {e}")
+            print(f"AI batch error: {e}")
             return None
 
     def continue_last_thought(self):
-        """Continue or react to her own last message unprompted."""
+        """Spontaneous streamer thought continuation."""
         mood = random.choice(self.moods)
-        full_system = self.system_prompt + f"\ncurrent stream vibe: {mood}\n"
+        full_system = f"{self.system_prompt}\n\n[current stream vibe: {mood}]"
 
         last = None
         for msg in reversed(list(self.memory)):
@@ -258,38 +127,32 @@ Reply with just the new user fact in one sentence, or NOTHING."""
         if not last:
             return self.get_random_comment()
 
-        prompt = f"you just said: \"{last}\"\nadd another funny thought or react to yourself in 1 short sentence."
+        prompt = f"you just said: \"{last}\"\nadd another spontaneous streamer thought or react to yourself in 1 sentence."
 
         try:
             raw_text = self._call_llm(
                 self._build_messages(full_system) + [{"role": "user", "content": prompt}],
-                max_tokens=90,
+                max_tokens=80,
                 temperature=0.88
             )
             filtered = filter_response(raw_text.strip())
             self.memory.append({"role": "assistant", "content": filtered})
-            self._save_short_term()
             return filtered
         except Exception as e:
             print(f"AI continue thought error: {e}")
             return None
 
     def get_random_comment(self):
+        """Break the silence with random streamer commentary."""
         mood = random.choice(self.moods)
-        messages = self._build_messages(self.system_prompt + f"\ncurrent stream vibe: {mood}\n")
-        messages.append({"role": "user", "content": "say something spontaneous, funny, or unhinged to chat to break the silence in 1 short sentence."})
+        messages = [
+            {"role": "system", "content": f"{self.system_prompt}\n\n[current stream vibe: {mood}]"},
+            {"role": "user", "content": "say something spontaneous, funny, or unhinged to chat about your games or stream in 1 sentence."}
+        ]
 
         try:
-            raw_text = self._call_llm(messages, max_tokens=90, temperature=0.92)
+            raw_text = self._call_llm(messages, max_tokens=80, temperature=0.92)
             return filter_response(raw_text.strip())
         except Exception as e:
             print(f"AI random comment error: {e}")
             return None
-
-    def add_manual_memory(self, fact, about="stream"):
-        self.longterm.append({
-            "fact": fact,
-            "about": about,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
-        })
-        self._save_long_term()
