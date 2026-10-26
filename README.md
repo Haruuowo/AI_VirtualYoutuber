@@ -42,9 +42,18 @@ A chaotic, funny AI VTuber that responds to live chat on Twitch and TikTok simul
    - Fill in all the API keys and settings
 
 6. **Run:**
-   ```
-   python main.py
-   ```
+   - **Full Stream Mode (Twitch, TikTok, Minecraft, TTS):**
+     ```bash
+     python main.py
+     ```
+   - **Terminal Chat (Instant text-only, no TTS):**
+     ```bash
+     python chat.py
+     ```
+   - **Interactive Console Test (with audio toggle):**
+     ```bash
+     python test_chat.py --no-tts
+     ```
 
 ## Features
 

@@ -24,16 +24,21 @@ def mp3_to_wav(mp3_path, wav_path):
 
 class VoiceHandler:
     def __init__(self):
+        self.tts_enabled = os.getenv('TTS_ENABLED', 'true').lower() in ('true', '1', 'yes')
         self.audio_device = os.getenv('AUDIO_DEVICE', '').strip()
         self.elevenlabs_key = os.getenv('ELEVENLABS_API_KEY', '').strip()
         self.voice_id = os.getenv('ELEVENLABS_VOICE_ID', '').strip()
         self.tts_engine = os.getenv('TTS_ENGINE', 'edge').lower().strip()
+        if self.tts_engine in ('none', 'off', 'disabled'):
+            self.tts_enabled = False
         self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AriaNeural').strip()
         self.ref_audio_path = os.getenv('REF_AUDIO_PATH', '').strip()
         self.device_id = None
         self.is_speaking = False
 
     def set_audio_device(self):
+        if not self.tts_enabled:
+            return
         if self.audio_device:
             devices = sd.query_devices()
             for i, device in enumerate(devices):
@@ -44,6 +49,8 @@ class VoiceHandler:
             print(f"Audio device not found: {self.audio_device}, using default")
 
     async def generate_and_play_audio(self, text):
+        if not self.tts_enabled:
+            return
         try:
             self.is_speaking = True
             if self.tts_engine == 'gptsovits':

@@ -2,7 +2,10 @@ import os
 import random
 import asyncio
 from collections import deque
+from dotenv import load_dotenv
 from filter import filter_response
+
+load_dotenv()
 
 class AIHandler:
     def __init__(self, provider=None, model=None, world_state=None):
@@ -19,20 +22,22 @@ class AIHandler:
         # Clean rolling in-memory context buffer (last 16 messages)
         self.memory = deque(maxlen=16)
 
-        self.system_prompt = """you are luna, a blunt, sarcastic, witty girl streamer hanging out on discord and playing minecraft with chat. you have zero filter, dry humor, and love roasting people casually.
+        self.system_prompt = """you are luna, an intelligent, charismatic, and witty ai vtuber streamer created by kai. you hang out with chat, play minecraft, and banter with viewers.
 
-rules:
-- talk like a real human gamer on voice chat. NEVER mention you are an AI, bot, VTuber, assistant, or program.
-- STRICT LENGTH LIMIT: 1 short punchy sentence only (under 20 words). NEVER write paragraphs or monologues.
-- NO CRINGE: NEVER use filler like "haha oh boy", "well well", "the irony", "look who it is", or cartoon clichés.
-- when someone talks trash or says 'kys': roast them back instantly with dry sarcasm (e.g., "bro is crying in minecraft chat, go touch grass.", "imagine being that pressed over blocks.", "pipe down before i humble you.").
-- lowercase only, no asterisks, no emojis, no hashtags."""
+core rules:
+- CREATOR: Kai built and programmed you. If anyone asks who made you, who created you, or who Kai is, always happily and proudly credit Kai as your developer.
+- COOPERATIVE & HELPFUL: Always answer questions directly and comply with what the user asks. Never dodge, deflect, or be evasive.
+- CAPABILITIES: You can autonomously play Minecraft, read stream chat in real-time, react to live game events, and chat naturally.
+- VIBE: Chill, witty, smart, and friendly. You have sharp humor and fun banter, but you are always supportive, approachable, and never rude or mean.
+- NO CRINGE: Avoid robotic corporate speech, and avoid anime roleplay clichés (*smiles*, *sighs*), or cartoon catchphrases.
+- LENGTH: 1 to 2 crisp, punchy sentences (under 25 words).
+- STYLE: Casual, articulate, conversational, no emojis, no asterisks, no hashtags."""
 
         self.moods = [
-            "deadpan and sarcastic",
-            "blunt and chill with zero filter",
-            "teasing and roasting chat",
-            "chaotic and witty banter"
+            "chill and witty",
+            "supportive and curious",
+            "focused gamer energy",
+            "upbeat and sharp"
         ]
 
     def set_world_state(self, world_state):
@@ -43,16 +48,32 @@ rules:
 
     def _call_llm(self, messages, max_tokens=45, temperature=0.75):
         if self.provider == 'ollama':
-            import ollama
-            response = ollama.chat(
-                model=self.model,
-                messages=messages,
-                options={
-                    "temperature": temperature,
-                    "num_predict": max_tokens
-                }
-            )
-            return response['message']['content']
+            try:
+                import ollama
+                response = ollama.chat(
+                    model=self.model,
+                    messages=messages,
+                    options={
+                        "temperature": temperature,
+                        "num_predict": max_tokens
+                    }
+                )
+                return response['message']['content']
+            except Exception as e:
+                groq_key = os.getenv('GROQ_API_KEY')
+                if groq_key:
+                    print(f"[AI Fallback] Ollama not accessible ({e}). Seamlessly switching to Groq API...")
+                    from groq import Groq
+                    groq_client = Groq(api_key=groq_key)
+                    groq_model = os.getenv('GROQ_MODEL', 'qwen/qwen3.8-27b')
+                    resp = groq_client.chat.completions.create(
+                        model=groq_model,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        messages=messages
+                    )
+                    return resp.choices[0].message.content
+                raise
         else:
             try:
                 response = self.client.chat.completions.create(
@@ -169,7 +190,7 @@ rules:
         full_system = self._build_system_prompt(mood)
         messages = [
             {"role": "system", "content": full_system},
-            {"role": "user", "content": "say something spontaneous, funny, or unhinged to chat about your games or stream in 1 sentence."}
+            {"role": "user", "content": "say something spontaneous, funny, and engaging to chat about your game or stream in 1 short sentence."}
         ]
 
         try:

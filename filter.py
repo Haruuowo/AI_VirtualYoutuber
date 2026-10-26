@@ -23,7 +23,8 @@ def filter_response(text):
     filtered = re.sub(r'\[.*?\]', '', filtered)
     filtered = re.sub(r'\(.*?\)', '', filtered)
     
-    # 3. Remove stray asterisks, quotes, or markdown artifacts
+    # 3. Remove stray asterisks, quotes, or markdown artifacts and normalize quotes
+    filtered = filtered.replace('’', "'").replace('‘', "'").replace('“', '"').replace('”', '"')
     filtered = filtered.replace('*', '').replace('"', '').replace('`', '')
     
     # 4. Clean up extra whitespace
