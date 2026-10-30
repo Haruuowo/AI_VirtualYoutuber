@@ -641,31 +641,50 @@ class VTuberStudioApp(ctk.CTk):
         scroll.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
         scroll.grid_columnconfigure(0, weight=1)
 
+        # Header Title
         ctk.CTkLabel(
             scroll,
-            text="☆ How to Setup & Run Luna (Tutorial) ☆",
-            font=ctk.CTkFont(family="Consolas", size=16, weight="bold"),
+            text="☆ QUICK-START GUIDE & TUTORIAL ☆",
+            font=ctk.CTkFont(family="Plus Jakarta Sans", size=18, weight="bold"),
             text_color="#4b5d84",
-        ).pack(anchor="w", padx=12, pady=(10, 6))
+        ).pack(anchor="w", padx=16, pady=(12, 4))
 
-        intro_text = (
-            "1. Zero Setup Required: The Live2D avatar model, WebAudio lip-sync, and fallback brains\n"
-            "   are already bundled inside the application! No manual asset downloading needed.\n\n"
-            "2. Fast AI Brain: Get a free API key at console.groq.com and paste it in Tab 2.\n"
-            "   (Or run Ollama locally for 100% offline private streaming).\n\n"
-            "3. Audio Routing: Tab 3 lets you test Edge-TTS or ElevenLabs, and select 'CABLE Input'\n"
-            "   if routing to VTube Studio.\n\n"
-            "4. 1-Click Launch: Head to Tab 1 and hit 'Start' on the Browser Demo or Full Stream!"
-        )
         ctk.CTkLabel(
             scroll,
-            text=intro_text,
-            justify="left",
+            text="Follow these 4 simple steps to have your AI VTuber live and answering chat in under 2 minutes.",
             font=ctk.CTkFont(size=12),
-            text_color="#2a2f3a",
-        ).pack(anchor="w", padx=14, pady=4)
+            text_color="#6b7280",
+        ).pack(anchor="w", padx=16, pady=(0, 14))
 
-        # Embedded Tutorial Screenshots
+        steps = [
+            ("STEP 1: ZERO ASSET DOWNLOADS", 
+             "The Live2D model (Konata/Luna), WebGL renderers, lip-sync scripts, and fallback response brain are bundled right into the app. No downloading 3D files or manual textures required."),
+            ("STEP 2: CONNECT AI BRAIN (TAB 2)", 
+             "• Cloud Mode (Fastest): Get a free API key at console.groq.com and paste it in Tab 2.\n• Local Mode (Offline): Install Ollama (ollama.com) and run 'ollama run qwen2.5:7b' for 100% private offline streaming."),
+            ("STEP 3: AUDIO & VOICE OUTPUT (TAB 3)", 
+             "• Testing: Choose 'edge' for free neural TTS and click '🔊 Test Voice Now'.\n• VTube Studio Lip-Sync: Choose your Virtual Audio Cable ('CABLE Input') as your Audio Output Device so VTube Studio can sync mouth movements."),
+            ("STEP 4: LAUNCH STREAM OR DEMO (TAB 1)", 
+             "• Click 'Start' on the Browser Stage & Live2D Demo to test Luna in your web browser with simulated chat & Brain Inspector.\n• Click 'Start' on the Full Stream Director to connect live Twitch and TikTok chat simultaneously!")
+        ]
+
+        for title, desc in steps:
+            card = ctk.CTkFrame(scroll, fg_color="#ffffff", border_width=1.5, border_color="#b0b8c8", corner_radius=6)
+            card.pack(fill="x", padx=14, pady=6)
+            ctk.CTkLabel(
+                card,
+                text=title,
+                font=ctk.CTkFont(size=12, weight="bold"),
+                text_color="#4b5d84",
+            ).pack(anchor="w", padx=12, pady=(8, 2))
+            ctk.CTkLabel(
+                card,
+                text=desc,
+                justify="left",
+                font=ctk.CTkFont(size=11),
+                text_color="#2a2f3a",
+            ).pack(anchor="w", padx=12, pady=(0, 8))
+
+        # Screenshots
         shot_path_1 = ROOT / "docs" / "screenshots" / "demo_showcase.png"
         shot_path_2 = ROOT / "docs" / "screenshots" / "studio_app.png"
 
@@ -675,34 +694,34 @@ class VTuberStudioApp(ctk.CTk):
             if shot_path_1.exists():
                 ctk.CTkLabel(
                     scroll,
-                    text="Screenshot: Browser Stage & Live2D Demo (PictoChat Theme)",
+                    text="★ Visual Reference: PictoChat Browser Stage & Live2D Avatar ★",
                     font=ctk.CTkFont(size=13, weight="bold"),
                     text_color="#4b5d84",
-                ).pack(anchor="w", padx=12, pady=(16, 4))
+                ).pack(anchor="w", padx=14, pady=(18, 4))
 
                 img1 = Image.open(str(shot_path_1))
                 w, h = img1.size
-                ratio = 560 / float(w)
-                ctk_img1 = ctk.CTkImage(light_image=img1, size=(560, int(h * ratio)))
+                ratio = 600 / float(w)
+                ctk_img1 = ctk.CTkImage(light_image=img1, size=(600, int(h * ratio)))
                 lbl1 = ctk.CTkLabel(scroll, image=ctk_img1, text="")
-                lbl1.pack(anchor="w", padx=12, pady=4)
+                lbl1.pack(anchor="w", padx=14, pady=4)
 
             if shot_path_2.exists():
                 ctk.CTkLabel(
                     scroll,
-                    text="Screenshot: AI VTuber Studio App Setup",
+                    text="★ Visual Reference: AI VTuber Studio App Setup ★",
                     font=ctk.CTkFont(size=13, weight="bold"),
                     text_color="#4b5d84",
-                ).pack(anchor="w", padx=12, pady=(16, 4))
+                ).pack(anchor="w", padx=14, pady=(18, 4))
 
                 img2 = Image.open(str(shot_path_2))
                 w, h = img2.size
-                ratio = 560 / float(w)
-                ctk_img2 = ctk.CTkImage(light_image=img2, size=(560, int(h * ratio)))
+                ratio = 600 / float(w)
+                ctk_img2 = ctk.CTkImage(light_image=img2, size=(600, int(h * ratio)))
                 lbl2 = ctk.CTkLabel(scroll, image=ctk_img2, text="")
-                lbl2.pack(anchor="w", padx=12, pady=4)
+                lbl2.pack(anchor="w", padx=14, pady=4)
         except Exception as e:
-            ctk.CTkLabel(scroll, text=f"(Screenshots preview unavailable: {e})").pack(anchor="w", padx=12)
+            ctk.CTkLabel(scroll, text=f"(Screenshots preview unavailable: {e})").pack(anchor="w", padx=14)
 
     # ── Actions & Logic ─────────────────────────────────────────────────────
 

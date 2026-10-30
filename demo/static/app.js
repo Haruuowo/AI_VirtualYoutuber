@@ -100,6 +100,21 @@
   $("simToggle").addEventListener("change", (e) => send({ type: "sim", enabled: e.target.checked }));
   $("resetBtn").addEventListener("click", () => send({ type: "reset" }));
   $("muteBtn").addEventListener("click", () => { muted = !muted; $("muteBtn").textContent = muted ? "🔇" : "🔊"; });
+
+  // ── Light / Night Mode Switcher ──
+  const savedTheme = localStorage.getItem("luna_theme") || "light";
+  document.documentElement.setAttribute("data-theme", savedTheme);
+  const updateThemeIcon = (th) => { $("themeToggleBtn").textContent = th === "dark" ? "☀️" : "🌙"; };
+  updateThemeIcon(savedTheme);
+
+  $("themeToggleBtn")?.addEventListener("click", () => {
+    const cur = document.documentElement.getAttribute("data-theme") || "light";
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("luna_theme", next);
+    updateThemeIcon(next);
+  });
+
   $("howBtn").addEventListener("click", () => ($("howModal").hidden = false));
   $("howClose").addEventListener("click", () => ($("howModal").hidden = true));
   $("howModal").addEventListener("click", (e) => { if (e.target.id === "howModal") $("howModal").hidden = true; });

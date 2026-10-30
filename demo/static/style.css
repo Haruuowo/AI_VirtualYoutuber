@@ -1,19 +1,43 @@
 :root {
-  /* Nintendo DS Pictochat Color Palette */
+  /* Nintendo DS Pictochat Color Palette (Light) */
   --nds-bg: #d7dbe4;
+  --nds-dot: #b8c0d2;
   --nds-surface: #eef1f6;
   --nds-card: #f9fafd;
+  --nds-card-bg: #ffffff;
   --nds-border-outer: #5c6478;
   --nds-border-main: #737c94;
   --nds-border-light: #b0b8c8;
   --nds-blue-tab: #8b9dc3;
   --nds-blue-dark: #4b5d84;
   --nds-blue-soft: #c8d3e6;
-  --nds-text: #2a2f3a;
-  --nds-text-muted: #6b7280;
-  --nds-accent: #6579a3;
+  --nds-text: #20242c;
+  --nds-text-muted: #646b7a;
+  --nds-accent: #556994;
   --nds-line-paper: #e4e8f0;
   --nds-shadow: rgba(42, 47, 58, 0.12);
+  --nds-chat-row: #f8fafc;
+}
+
+[data-theme="dark"] {
+  /* PictoChat Midnight / Retro NDS Dark Mode */
+  --nds-bg: #1c1f26;
+  --nds-dot: #2d3340;
+  --nds-surface: #242933;
+  --nds-card: #2c3240;
+  --nds-card-bg: #222630;
+  --nds-border-outer: #475063;
+  --nds-border-main: #58637a;
+  --nds-border-light: #3a4254;
+  --nds-blue-tab: #4d5b7a;
+  --nds-blue-dark: #7d93be;
+  --nds-blue-soft: #2e3646;
+  --nds-text: #e6ebf5;
+  --nds-text-muted: #9ba6bc;
+  --nds-accent: #788eb8;
+  --nds-line-paper: #282e3b;
+  --nds-shadow: rgba(0, 0, 0, 0.35);
+  --nds-chat-row: #262c37;
 }
 
 * {
@@ -27,18 +51,18 @@ html, body {
 }
 
 body {
-  font-family: "JetBrains Mono", "Courier New", monospace;
+  font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background-color: var(--nds-bg);
-  /* Pictochat subtle dual-tone dot grid */
   background-image: 
-    radial-gradient(#b8c0d2 1.2px, transparent 1.2px),
-    radial-gradient(#b8c0d2 1.2px, var(--nds-bg) 1.2px);
+    radial-gradient(var(--nds-dot) 1.2px, transparent 1.2px),
+    radial-gradient(var(--nds-dot) 1.2px, var(--nds-bg) 1.2px);
   background-size: 24px 24px;
   background-position: 0 0, 12px 12px;
   color: var(--nds-text);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  transition: background-color 0.25s, color 0.25s;
 }
 
 button {
@@ -335,8 +359,8 @@ button {
   border-radius: 10px;
   overflow: hidden;
   border: 3px solid var(--nds-border-outer);
-  background: #e4e7ee;
-  box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.08), inset 0 0 0 1px #fff;
+  background: var(--nds-card-bg);
+  box-shadow: 3px 3px 0px var(--nds-shadow), inset 0 0 0 1px rgba(255, 255, 255, 0.15);
   display: flex;
   flex-direction: column;
 }
@@ -367,8 +391,7 @@ button {
 .stage-bg {
   position: absolute;
   inset: 0;
-  /* Pictochat Screen background: Soft off-white with ruled subtle lines */
-  background: #eef2f8;
+  background: var(--nds-surface);
   background-image: 
     linear-gradient(var(--nds-line-paper) 1px, transparent 1px),
     linear-gradient(90deg, var(--nds-line-paper) 1px, transparent 1px);
@@ -389,7 +412,7 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: #ffffff;
+  background: var(--nds-card-bg);
   border: 1.5px solid var(--nds-border-main);
   padding: 4px 12px;
   border-radius: 20px;
@@ -412,7 +435,7 @@ button {
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
-  background: #ffffff;
+  background: var(--nds-card-bg);
   border: 1.5px solid var(--nds-border-main);
   padding: 4px 14px;
   border-radius: 20px;
@@ -460,7 +483,7 @@ button {
   padding: 8px 14px;
   border-radius: 6px;
   min-width: 240px;
-  background: #ffffff;
+  background: var(--nds-card-bg);
   border: 2px solid var(--nds-blue-dark);
   box-shadow: 2px 2px 0px var(--nds-border-outer);
   animation: toastIn 0.25s ease;
@@ -502,16 +525,16 @@ button {
 
 .caption {
   max-width: 760px;
-  font-size: 17px;
+  font-size: 16px;
   line-height: 1.45;
   font-weight: 700;
   text-align: center;
   color: var(--nds-text);
-  background: #ffffff;
+  background: var(--nds-card-bg);
   border: 2px solid var(--nds-border-outer);
   padding: 10px 20px;
   border-radius: 8px;
-  box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.08);
+  box-shadow: 3px 3px 0px var(--nds-shadow);
   opacity: 0;
   transform: translateY(6px);
   transition: opacity 0.25s, transform 0.25s;
@@ -563,7 +586,7 @@ button {
   width: 220px;
   height: 220px;
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--nds-card-bg);
   border: 3px solid var(--nds-border-outer);
   position: relative;
   box-shadow: 4px 4px 0px var(--nds-border-light);
@@ -609,7 +632,7 @@ button {
 }
 
 .panel {
-  background: #ffffff;
+  background: var(--nds-card-bg);
   border: 2.5px solid var(--nds-border-outer);
   border-radius: 8px;
   display: flex;
@@ -617,7 +640,7 @@ button {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.07), inset 1px 1px 0px #fff;
+  box-shadow: 3px 3px 0px var(--nds-shadow), inset 1px 1px 0px rgba(255, 255, 255, 0.08);
 }
 
 .panel-head {
@@ -646,7 +669,7 @@ button {
   flex-direction: column;
   gap: 6px;
   scroll-behavior: smooth;
-  background-color: #fafbfc;
+  background-color: var(--nds-card-bg);
   background-image: linear-gradient(var(--nds-line-paper) 1px, transparent 1px);
   background-size: 100% 24px;
 }
@@ -665,12 +688,13 @@ button {
 }
 
 .msg {
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.45;
   padding: 5px 8px;
   border-radius: 4px;
-  background: #ffffff;
+  background: var(--nds-card-bg);
   border: 1px solid var(--nds-border-light);
+  color: var(--nds-text);
   word-wrap: break-word;
 }
 
@@ -709,12 +733,12 @@ button {
 }
 
 .msg.direct {
-  background: #f1f5f9;
+  background: var(--nds-chat-row);
   border-left: 3px solid var(--nds-blue-dark);
 }
 
 .msg.luna {
-  background: #f0f4fa;
+  background: var(--nds-surface);
   border-left: 3px solid var(--nds-accent);
 }
 
@@ -729,7 +753,7 @@ button {
   padding: 6px 10px 0;
   overflow-x: auto;
   scrollbar-width: none;
-  background: #ffffff;
+  background: var(--nds-card-bg);
 }
 
 .chips::-webkit-scrollbar {
@@ -738,12 +762,12 @@ button {
 
 .chips button {
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--nds-text);
   background: var(--nds-surface);
   border: 1.5px solid var(--nds-border-main);
-  padding: 3px 10px;
+  padding: 4px 11px;
   border-radius: 12px;
   transition: 0.1s;
 }
@@ -757,18 +781,18 @@ button {
   display: flex;
   gap: 6px;
   padding: 8px 10px 10px;
-  background: #ffffff;
+  background: var(--nds-card-bg);
 }
 
 .chatform input {
   flex: 1;
-  background: #ffffff;
+  background: var(--nds-card-bg);
   border: 1.5px solid var(--nds-border-main);
   color: var(--nds-text);
   padding: 8px 12px;
   border-radius: 6px;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   outline: none;
 }
 
@@ -789,88 +813,34 @@ button {
 }
 
 .btn-send:hover {
-  background: #3c4c6e;
+  filter: brightness(1.1);
 }
 
-.toggle {
+.btn-ghost {
+  background: var(--nds-card-bg);
+  border: 1.5px solid var(--nds-border-main);
+  color: var(--nds-text);
+  padding: 5px 12px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-weight: 700;
+  box-shadow: 1px 1px 0px var(--nds-border-light);
+  transition: all 0.1s;
+}
+
+.btn-ghost:hover {
+  background: var(--nds-blue-soft);
+  border-color: var(--nds-blue-dark);
+}
+
+.topbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  font-size: 11px;
-  color: var(--nds-text-muted);
-  user-select: none;
-  font-weight: 600;
-}
-
-.toggle input {
-  display: none;
-}
-
-.track {
-  width: 30px;
-  height: 16px;
-  border-radius: 10px;
-  background: #cbd5e1;
-  border: 1px solid var(--nds-border-main);
-  position: relative;
-  transition: 0.15s;
-}
-
-.thumb {
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #ffffff;
-  transition: 0.15s;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-}
-
-.toggle input:checked + .track {
-  background: var(--nds-blue-dark);
-}
-
-.toggle input:checked + .track .thumb {
-  left: 15px;
-}
-
-/* Brain Pipeline: Retro Flow Nodes */
-.pipeline {
-  display: flex;
-  align-items: center;
-  padding: 7px 10px;
-  gap: 0;
+  justify-content: space-between;
+  padding: 8px 16px;
   background: var(--nds-surface);
-  border-bottom: 1.5px solid var(--nds-border-main);
-}
-
-.pipeline i {
-  flex: 1;
-  height: 2px;
-  background: var(--nds-border-light);
-  min-width: 6px;
-}
-
-.pipeline .node {
-  font-size: 9.5px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  padding: 3px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--nds-border-main);
-  color: var(--nds-text-muted);
-  background: #ffffff;
-  transition: 0.2s;
-}
-
-.pipeline .node.on {
-  color: #ffffff;
-  background: var(--nds-blue-dark);
-  border-color: var(--nds-border-outer);
-  box-shadow: 0 0 6px var(--nds-blue-tab);
+  border-bottom: 2px solid var(--nds-border-outer);
+  box-shadow: 0 1px 3px var(--nds-shadow);
 }
 
 .brainlog {
@@ -881,7 +851,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: #ffffff;
+  background: var(--nds-card-bg);
 }
 
 .row {
@@ -891,8 +861,8 @@ button {
   align-items: start;
   padding: 4px 6px;
   border-radius: 4px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--nds-chat-row);
+  border: 1px solid var(--nds-border-light);
 }
 
 .row .ic {
