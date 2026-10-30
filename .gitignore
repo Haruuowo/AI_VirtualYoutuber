@@ -26,3 +26,5 @@ Thumbs.db
 temp_audio.mp3
 temp_audio.wav
 luna_memory.json
+dist/
+build/
