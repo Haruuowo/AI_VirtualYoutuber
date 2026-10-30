@@ -90,6 +90,7 @@ stats = {"messages": 0, "replies": 0, "llm_ms": [], "tts_ms": [], "started": tim
 
 def _pick_provider():
     """Prefer a provider that will actually answer on an interview laptop."""
+    load_dotenv(ROOT / ".env", override=True)
     if os.getenv("GROQ_API_KEY"):
         return "groq"
     try:
