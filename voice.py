@@ -5,8 +5,12 @@ import sounddevice as sd
 import soundfile as sf
 import io
 import time
+import shutil
+from dotenv import load_dotenv
 
-FFMPEG = r"C:\Users\Worldwide\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe"
+load_dotenv()
+
+FFMPEG = shutil.which("ffmpeg") or r"C:\Users\Worldwide\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_MP3 = os.path.join(BASE_DIR, "temp_audio.mp3")
 TEMP_WAV = os.path.join(BASE_DIR, "temp_audio.wav")

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Luna · AI VTuber</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- ── Intro / Go Live ─────────────────────────────────────────── -->
+  <div id="intro" class="intro">
+    <div class="intro-card">
+      <div class="intro-glow"></div>
+      <div class="intro-badge">AI VTUBER · BUILT BY KAI</div>
+      <h1>Luna</h1>
+      <p class="intro-sub">An autonomous AI streamer that reads live chat, decides what matters,
+        talks back with a real voice, and controls a Minecraft bot.</p>
+      <div class="intro-tech">
+        <span>Python · asyncio</span><span>LLM (Groq / Ollama)</span><span>Neural TTS</span>
+        <span>Live2D</span><span>Mineflayer bot</span><span>WebSockets</span>
+      </div>
+      <button id="goLive" class="btn-live"><span class="dot"></span> Go Live</button>
+      <div class="intro-status" id="introStatus">connecting to Luna's brain…</div>
+    </div>
+  </div>
+
+  <!-- ── Top bar ─────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">L</div>
+      <div>
+        <div class="brand-name">Luna <span class="muted">· AI VTuber</span></div>
+        <div class="brand-sub">by Kai</div>
+      </div>
+      <span class="live-pill"><span class="dot"></span>LIVE</span>
+      <span class="meta"><svg viewBox="0 0 24 24"><path d="M12 5c-7 0-10 7-10 7s3 7 10 7 10-7 10-7-3-7-10-7zm0 11a4 4 0 110-8 4 4 0 010 8z"/></svg><b id="viewers">--</b></span>
+      <span class="meta mono" id="uptime">00:00</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><span>brain</span><b id="brainBadge">--</b></div>
+      <div class="stat"><span>avg LLM</span><b id="llmAvg">--</b></div>
+      <div class="stat"><span>avg TTS</span><b id="ttsAvg">--</b></div>
+      <div class="stat"><span>replies</span><b id="replies">0</b></div>
+      <button class="btn-ghost" id="muteBtn" title="Mute / unmute">🔊</button>
+      <button class="btn-ghost" id="howBtn">How it works</button>
+    </div>
+  </header>
+
+  <!-- ── Main layout ─────────────────────────────────────────────── -->
+  <main class="layout">
+    <section class="stage" id="stage">
+      <div class="stage-bg"><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="grid"></div></div>
+      <canvas id="live2d"></canvas>
+      <div class="fallback-avatar" id="fallbackAvatar" hidden>
+        <div class="fa-face"><div class="fa-eyes"><i></i><i></i></div><div class="fa-mouth" id="faMouth"></div></div>
+      </div>
+
+      <div class="mood-chip" id="moodChip"><span class="mood-dot"></span><span id="moodText">warming up</span></div>
+      <div class="thinking" id="thinking"><span></span><span></span><span></span> thinking</div>
+      <div class="toasts" id="toasts"></div>
+
+      <div class="caption-wrap">
+        <div class="caption" id="caption"></div>
+      </div>
+      <div class="nameplate"><b>LUNA</b><span>AI VTuber · made by Kai</span></div>
+    </section>
+
+    <aside class="side">
+      <div class="panel chat-panel">
+        <div class="panel-head">
+          <div class="panel-title">Live Chat</div>
+          <label class="toggle" title="Simulate Twitch / TikTok viewers">
+            <input type="checkbox" id="simToggle" />
+            <span class="track"><span class="thumb"></span></span>
+            <span class="toggle-label">simulate viewers</span>
+          </label>
+        </div>
+        <div class="chatlog" id="chatlog">
+          <div class="empty">Welcome to the stream 👋<br><span>Type below, tap a suggestion, or turn on <b>simulate viewers</b>.</span></div>
+        </div>
+        <div class="chips" id="chips">
+          <button>Who made you?</button>
+          <button>Luna, mine some diamonds</button>
+          <button>Luna, protect me from the creepers</button>
+          <button>What can you actually do?</button>
+          <button>Roast my code, Luna</button>
+        </div>
+        <form class="chatform" id="chatform" autocomplete="off">
+          <input id="chatInput" placeholder="Say something to Luna…" maxlength="300" />
+          <button type="submit" class="btn-send">Send</button>
+        </form>
+      </div>
+
+      <div class="panel brain-panel">
+        <div class="panel-head">
+          <div class="panel-title">Brain <span class="muted">· live pipeline</span></div>
+          <button class="btn-ghost sm" id="resetBtn" title="Clear Luna's short-term memory">reset memory</button>
+        </div>
+        <div class="pipeline" id="pipeline">
+          <div class="node" data-n="chat">Chat</div><i></i>
+          <div class="node" data-n="route">Router</div><i></i>
+          <div class="node" data-n="intent">Intent</div><i></i>
+          <div class="node" data-n="llm">LLM</div><i></i>
+          <div class="node" data-n="tts">TTS</div><i></i>
+          <div class="node" data-n="avatar">Avatar</div>
+        </div>
+        <div class="brainlog" id="brainlog">
+          <div class="empty">Every message Luna handles is traced here:<br><span>routing priority → intent → LLM latency → voice synthesis.</span></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ── How it works modal ──────────────────────────────────────── -->
+  <div class="modal" id="howModal" hidden>
+    <div class="modal-card">
+      <button class="modal-x" id="howClose">✕</button>
+      <h2>How Luna works</h2>
+      <p class="muted">One async Python process orchestrates every input and output. This demo runs the
+        <b>same</b> <code>StreamDirector</code> as the live stream, with web adapters swapped in for speakers, Twitch and Minecraft.</p>
+
+      <div class="arch">
+        <div class="arch-col">
+          <div class="arch-h">Inputs</div>
+          <div class="box">Twitch chat</div><div class="box">TikTok Live</div><div class="box">Microphone (STT)</div><div class="box">Minecraft events</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-col">
+          <div class="arch-h">StreamDirector</div>
+          <div class="box hl">Priority router<small>P0 danger … P4 idle banter</small></div>
+          <div class="box hl">Intent parser<small>regex → game actions, 0 ms</small></div>
+          <div class="box hl">Speech queue<small>priority + TTL, one voice at a time</small></div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-col">
+          <div class="arch-h">Brain</div>
+          <div class="box">LLM persona<small>Groq ⇄ Ollama auto-failover</small></div>
+          <div class="box">Rolling memory<small>last 16 turns + game state</small></div>
+          <div class="box">Output filter<small>TTS-safe, moderated</small></div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-col">
+          <div class="arch-h">Outputs</div>
+          <div class="box">Neural TTS voice</div><div class="box">Live2D avatar + lip-sync</div><div class="box">Mineflayer bot (Node.js)</div><div class="box">In-game chat</div>
+        </div>
+      </div>
+
+      <div class="how-grid">
+        <div><b>Real-time & concurrent</b><p>asyncio event loop; blocking LLM calls run in worker threads so chat never stalls.</p></div>
+        <div><b>Never goes silent</b><p>Provider failover (cloud ⇄ local) and scripted fallback keep the stream alive.</p></div>
+        <div><b>Decides what matters</b><p>Mentions and game danger jump the queue; stale replies expire via TTL.</p></div>
+        <div><b>Plays the game</b><p>Chat commands become Mineflayer actions over an HTTP bridge to a Node.js bot.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/vendor/live2dcubismcore.min.js"></script>
+  <script src="/static/vendor/pixi.min.js"></script>
+  <script src="/static/vendor/cubism4.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
+

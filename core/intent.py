@@ -15,10 +15,10 @@ COMMAND_PATTERNS = [
     (re.compile(r'\b(follow)\s+([a-zA-Z0-9_]+)\b', re.IGNORECASE), "follow_player", {"group": 2}),
     
     # Mining / Gathering
-    (re.compile(r'\b(mine|chop|gather|collect)\s+(wood|trees?|logs?)\b', re.IGNORECASE), "collect", {"block": "oak_log", "count": 8}),
-    (re.compile(r'\b(mine|gather|collect)\s+(stone|cobblestone)\b', re.IGNORECASE), "collect", {"block": "stone", "count": 10}),
-    (re.compile(r'\b(mine|find|gather)\s+(iron|iron\s+ore)\b', re.IGNORECASE), "collect", {"block": "iron_ore", "count": 4}),
-    (re.compile(r'\b(mine|dig|find)\s+(diamonds?)\b', re.IGNORECASE), "collect", {"block": "diamond_ore", "count": 3}),
+    (re.compile(r'\b(mine|chop|gather|collect)(?:\s+(?:some|me|the|a\s+few|a\s+bit\s+of))?\s+(wood|trees?|logs?)\b', re.IGNORECASE), "collect", {"block": "oak_log", "count": 8}),
+    (re.compile(r'\b(mine|gather|collect)(?:\s+(?:some|me|the|a\s+few|a\s+bit\s+of))?\s+(stone|cobblestone)\b', re.IGNORECASE), "collect", {"block": "stone", "count": 10}),
+    (re.compile(r'\b(mine|find|gather)(?:\s+(?:some|me|the|a\s+few|a\s+bit\s+of))?\s+(iron|iron\s+ore)\b', re.IGNORECASE), "collect", {"block": "iron_ore", "count": 4}),
+    (re.compile(r'\b(mine|dig|find)(?:\s+(?:some|me|the|a\s+few|a\s+bit\s+of))?\s+(diamonds?)\b', re.IGNORECASE), "collect", {"block": "diamond_ore", "count": 3}),
     (re.compile(r'\b(go\s+mine|start\s+mining)\b', re.IGNORECASE), "mine", {}),
 
     # Combat & Protection

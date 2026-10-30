@@ -133,14 +133,17 @@ class TikTokBot:
 async def run_bots(message_queue, voice_handler):
     tasks = []
     
-    mic_bot = MicBot(message_queue, voice_handler)
-    tasks.append(mic_bot.start())
+    if os.getenv('MIC_ENABLED', 'true').lower() in ('true', '1', 'yes'):
+        mic_bot = MicBot(message_queue, voice_handler)
+        tasks.append(mic_bot.start())
 
-    if os.getenv('TWITCH_TOKEN'):
+    if os.getenv('TWITCH_ENABLED', 'true').lower() in ('true', '1', 'yes') and os.getenv('TWITCH_TOKEN'):
         twitch_bot = TwitchBot(message_queue)
         tasks.append(twitch_bot.start())
     
-    tiktok_bot = TikTokBot(message_queue)
-    tasks.append(tiktok_bot.start())
+    if os.getenv('TIKTOK_ENABLED', 'true').lower() in ('true', '1', 'yes') and os.getenv('TIKTOK_USERNAME'):
+        tiktok_bot = TikTokBot(message_queue)
+        tasks.append(tiktok_bot.start())
 
-    await asyncio.gather(*tasks)    
+    if tasks:
+        await asyncio.gather(*tasks)

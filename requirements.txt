@@ -2,10 +2,13 @@ websockets
 TikTokLive
 groq
 elevenlabs
-edge-tts
+edge-tts>=7.3.1
 sounddevice
 soundfile
 httpx
 python-dotenv
 speechrecognition
 pyaudio
+customtkinter
+fastapi
+uvicorn

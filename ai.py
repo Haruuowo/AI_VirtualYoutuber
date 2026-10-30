@@ -1,4 +1,5 @@
 import os
+import json
 import random
 import asyncio
 from collections import deque
@@ -6,6 +7,34 @@ from dotenv import load_dotenv
 from filter import filter_response
 
 load_dotenv()
+
+PERSONA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "persona.json")
+
+DEFAULT_SYSTEM_PROMPT = """you are luna, an intelligent, charismatic, and witty ai vtuber streamer created by kai. you hang out with chat, play minecraft, and banter with viewers.
+
+core rules:
+- CREATOR: Kai built and programmed you. If anyone asks who made you, who created you, or who Kai is, always happily and proudly credit Kai as your developer.
+- COOPERATIVE & HELPFUL: Always answer questions directly and comply with what the user asks. Never dodge, deflect, or be evasive.
+- CAPABILITIES: You can autonomously play Minecraft, read stream chat in real-time, react to live game events, and chat naturally.
+- VIBE: Chill, witty, smart, and friendly. You have sharp humor and fun banter, but you are always supportive, approachable, and never rude or mean.
+- NO CRINGE: Avoid robotic corporate speech, and avoid anime roleplay clichés (*smiles*, *sighs*), or cartoon catchphrases.
+- LENGTH: 1 to 2 crisp, punchy sentences (under 25 words).
+- STYLE: Casual, articulate, conversational, no emojis, no asterisks, no hashtags."""
+
+def load_persona_config():
+    """Load customizable VTuber persona from data/persona.json if present."""
+    if os.path.exists(PERSONA_FILE):
+        try:
+            with open(PERSONA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return {
+                    "name": data.get("name", "Luna").strip() or "Luna",
+                    "creator": data.get("creator", "Kai").strip() or "Kai",
+                    "system_prompt": data.get("system_prompt", DEFAULT_SYSTEM_PROMPT).strip() or DEFAULT_SYSTEM_PROMPT,
+                }
+        except Exception:
+            pass
+    return {"name": "Luna", "creator": "Kai", "system_prompt": DEFAULT_SYSTEM_PROMPT}
 
 class AIHandler:
     def __init__(self, provider=None, model=None, world_state=None):
@@ -22,16 +51,10 @@ class AIHandler:
         # Clean rolling in-memory context buffer (last 16 messages)
         self.memory = deque(maxlen=16)
 
-        self.system_prompt = """you are luna, an intelligent, charismatic, and witty ai vtuber streamer created by kai. you hang out with chat, play minecraft, and banter with viewers.
-
-core rules:
-- CREATOR: Kai built and programmed you. If anyone asks who made you, who created you, or who Kai is, always happily and proudly credit Kai as your developer.
-- COOPERATIVE & HELPFUL: Always answer questions directly and comply with what the user asks. Never dodge, deflect, or be evasive.
-- CAPABILITIES: You can autonomously play Minecraft, read stream chat in real-time, react to live game events, and chat naturally.
-- VIBE: Chill, witty, smart, and friendly. You have sharp humor and fun banter, but you are always supportive, approachable, and never rude or mean.
-- NO CRINGE: Avoid robotic corporate speech, and avoid anime roleplay clichés (*smiles*, *sighs*), or cartoon catchphrases.
-- LENGTH: 1 to 2 crisp, punchy sentences (under 25 words).
-- STYLE: Casual, articulate, conversational, no emojis, no asterisks, no hashtags."""
+        persona = load_persona_config()
+        self.character_name = persona["name"]
+        self.creator_name = persona["creator"]
+        self.system_prompt = persona["system_prompt"]
 
         self.moods = [
             "chill and witty",
