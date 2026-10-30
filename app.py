@@ -145,13 +145,13 @@ class ProcessController:
 class VTuberStudioApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        # Pictochat / NDS Slate aesthetic
-        ctk.set_appearance_mode("light")
-        self.configure(fg_color="#d7dbe4")
+        # Clean modern Dark Mode
+        ctk.set_appearance_mode("dark")
+        self.configure(fg_color="#181920")
 
-        self.title("☆ PictoChat · Luna AI VTuber Studio ☆")
-        self.geometry("960x700")
-        self.minsize(860, 620)
+        self.title("Luna AI VTuber Studio")
+        self.geometry("1060x720")
+        self.minsize(980, 640)
 
         self.env = read_env_dict()
         self.persona = load_persona_config()
@@ -188,56 +188,54 @@ class VTuberStudioApp(ctk.CTk):
     # ── Top Header ──────────────────────────────────────────────────────────
 
     def _build_header(self):
-        hdr = ctk.CTkFrame(self, fg_color="#eef1f6", border_width=2, border_color="#5c6478", corner_radius=8, height=60)
-        hdr.pack(fill="x", side="top", padx=14, pady=(10, 4))
+        hdr = ctk.CTkFrame(self, fg_color="#22242e", border_width=1, border_color="#363947", corner_radius=10, height=64)
+        hdr.pack(fill="x", side="top", padx=16, pady=(12, 6))
 
         title_box = ctk.CTkFrame(hdr, fg_color="transparent")
-        title_box.pack(side="left", padx=16, pady=8)
+        title_box.pack(side="left", padx=18, pady=10)
         self.hdr_title = ctk.CTkLabel(
             title_box,
-            text=f"★ {self.persona['name']} · AI VTuber Studio ★",
-            font=ctk.CTkFont(family="Consolas", size=18, weight="bold"),
-            text_color="#4b5d84",
+            text=f"{self.persona['name']} · AI VTuber Studio",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color="#f1f5f9",
         )
         self.hdr_title.pack(anchor="w")
         ctk.CTkLabel(
             title_box,
-            text="Nintendo DS PictoChat Style Control Center · Zero IDE setup required.",
-            font=ctk.CTkFont(size=11),
-            text_color="#6b7280",
+            text="Control Center & Live Testing Sandbox · No code editing needed",
+            font=ctk.CTkFont(size=12),
+            text_color="#94a3b8",
         ).pack(anchor="w")
 
-        self.save_status = ctk.CTkLabel(hdr, text="", font=ctk.CTkFont(size=12, weight="bold"), text_color="#2b7a4b")
-        self.save_status.pack(side="right", padx=12)
+        self.save_status = ctk.CTkLabel(hdr, text="", font=ctk.CTkFont(size=13, weight="bold"), text_color="#34d399")
+        self.save_status.pack(side="right", padx=14)
 
         ctk.CTkButton(
             hdr,
             text="Save Settings",
-            width=130,
-            fg_color="#4b5d84",
-            hover_color="#3b4b6b",
-            border_width=1.5,
-            border_color="#5c6478",
-            text_color="#ffffff",
-            font=ctk.CTkFont(weight="bold"),
+            width=135,
+            height=34,
+            fg_color="#6366f1",
+            hover_color="#4f46e5",
+            font=ctk.CTkFont(size=13, weight="bold"),
             command=self.save_all,
-        ).pack(side="right", padx=14, pady=10)
+        ).pack(side="right", padx=16, pady=12)
 
     # ── Tabs ────────────────────────────────────────────────────────────────
 
     def _build_tabs(self):
         self.tabs = ctk.CTkTabview(
             self,
-            corner_radius=8,
-            fg_color="#f9fafd",
-            segmented_button_fg_color="#c8d3e6",
-            segmented_button_selected_color="#4b5d84",
-            segmented_button_selected_hover_color="#3b4b6b",
-            segmented_button_unselected_color="#c8d3e6",
-            segmented_button_unselected_hover_color="#b4c2da",
-            text_color="#2a2f3a",
+            corner_radius=10,
+            fg_color="#22242e",
+            segmented_button_fg_color="#181920",
+            segmented_button_selected_color="#6366f1",
+            segmented_button_selected_hover_color="#4f46e5",
+            segmented_button_unselected_color="#2a2c38",
+            segmented_button_unselected_hover_color="#373a4a",
+            text_color="#f8fafc",
         )
-        self.tabs.pack(fill="both", expand=True, padx=14, pady=(4, 14))
+        self.tabs.pack(fill="both", expand=True, padx=16, pady=(4, 16))
 
         t_launch = self.tabs.add("1. Launch & Demo Test")
         t_persona = self.tabs.add("2. Persona & AI Brain")
@@ -296,25 +294,26 @@ class VTuberStudioApp(ctk.CTk):
         self.log_box.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
 
         # Right column: Built-in Demo Chat Sandbox
-        right = ctk.CTkFrame(parent)
+        right = ctk.CTkFrame(parent, fg_color="#282a36", border_width=1, border_color="#3d4052", corner_radius=8)
         right.grid(row=0, column=1, sticky="nsew", padx=(8, 4), pady=4)
         right.grid_rowconfigure(1, weight=1)
         right.grid_columnconfigure(0, weight=1)
 
         top_bar = ctk.CTkFrame(right, fg_color="transparent")
-        top_bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
+        top_bar.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
         ctk.CTkLabel(
             top_bar,
             text="Quick Test Sandbox (In-App Demo)",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(size=15, weight="bold"),
+            text_color="#f8fafc",
         ).pack(side="left")
 
         self.sandbox_tts_var = ctk.BooleanVar(value=True)
         ctk.CTkSwitch(
-            top_bar, text="Speak replies", variable=self.sandbox_tts_var, font=ctk.CTkFont(size=12)
+            top_bar, text="Speak replies", variable=self.sandbox_tts_var, font=ctk.CTkFont(size=12), text_color="#cbd5e1"
         ).pack(side="right")
 
-        self.chat_box = ctk.CTkTextbox(right, font=ctk.CTkFont(size=13), wrap="word")
+        self.chat_box = ctk.CTkTextbox(right, font=ctk.CTkFont(size=13), wrap="word", fg_color="#1e1f29", text_color="#f1f5f9")
         self.chat_box.grid(row=1, column=0, sticky="nsew", padx=12, pady=4)
         self.chat_box.insert(
             "end",
@@ -325,54 +324,78 @@ class VTuberStudioApp(ctk.CTk):
         self.chat_box.configure(state="disabled")
 
         chips = ctk.CTkFrame(right, fg_color="transparent")
-        chips.grid(row=2, column=0, sticky="ew", padx=12, pady=2)
+        chips.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
         for prompt in ["Who made you?", "Luna, mine some diamonds", "Luna, protect me", "Roast my setup"]:
             ctk.CTkButton(
                 chips,
                 text=prompt,
-                height=26,
-                fg_color=("gray80", "#252542"),
-                hover_color=("gray70", "#36365e"),
-                font=ctk.CTkFont(size=11),
+                height=28,
+                fg_color="#373a4a",
+                hover_color="#474a5e",
+                text_color="#e2e8f0",
+                font=ctk.CTkFont(size=11, weight="bold"),
                 command=lambda p=prompt: self._send_sandbox(p),
             ).pack(side="left", padx=(0, 6))
 
         input_row = ctk.CTkFrame(right, fg_color="transparent")
-        input_row.grid(row=3, column=0, sticky="ew", padx=12, pady=(4, 10))
+        input_row.grid(row=3, column=0, sticky="ew", padx=12, pady=(4, 12))
         input_row.grid_columnconfigure(0, weight=1)
-        self.sandbox_entry = ctk.CTkEntry(input_row, placeholder_text="Say something to test your VTuber...")
+        self.sandbox_entry = ctk.CTkEntry(
+            input_row,
+            placeholder_text="Say something to test your VTuber...",
+            fg_color="#1e1f29",
+            text_color="#f8fafc",
+            border_color="#3d4052",
+        )
         self.sandbox_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.sandbox_entry.bind("<Return>", lambda _e: self._send_sandbox())
-        ctk.CTkButton(input_row, text="Send", width=80, command=self._send_sandbox).grid(row=0, column=1)
+        ctk.CTkButton(
+            input_row,
+            text="Send",
+            width=84,
+            height=32,
+            fg_color="#6366f1",
+            hover_color="#4f46e5",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self._send_sandbox,
+        ).grid(row=0, column=1)
 
     def _make_service_card(self, parent, row, key, title, subtitle, controller: ProcessController, extra_btn=None):
-        card = ctk.CTkFrame(parent)
-        card.grid(row=row, column=0, sticky="ew", pady=4)
+        card = ctk.CTkFrame(parent, fg_color="#282a36", border_width=1, border_color="#3d4052", corner_radius=8)
+        card.grid(row=row, column=0, sticky="ew", pady=5)
         card.grid_columnconfigure(0, weight=1)
 
         info = ctk.CTkFrame(card, fg_color="transparent")
-        info.grid(row=0, column=0, sticky="w", padx=12, pady=8)
-        ctk.CTkLabel(info, text=title, font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w")
-        ctk.CTkLabel(info, text=subtitle, font=ctk.CTkFont(size=11), text_color="gray70").pack(anchor="w")
+        info.grid(row=0, column=0, sticky="w", padx=14, pady=10)
+        ctk.CTkLabel(info, text=title, font=ctk.CTkFont(size=14, weight="bold"), text_color="#f8fafc").pack(anchor="w")
+        ctk.CTkLabel(info, text=subtitle, font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
 
         btns = ctk.CTkFrame(card, fg_color="transparent")
-        btns.grid(row=0, column=1, sticky="e", padx=10)
+        btns.grid(row=0, column=1, sticky="e", padx=12)
 
-        badge = ctk.CTkLabel(btns, text="● STOPPED", text_color="gray60", font=ctk.CTkFont(size=11, weight="bold"))
-        badge.pack(side="left", padx=8)
+        badge = ctk.CTkLabel(btns, text="● STOPPED", text_color="#94a3b8", font=ctk.CTkFont(size=11, weight="bold"))
+        badge.pack(side="left", padx=10)
 
         if extra_btn:
-            ctk.CTkButton(btns, text=extra_btn[0], width=100, height=28, command=extra_btn[1]).pack(
-                side="left", padx=4
-            )
+            ctk.CTkButton(
+                btns,
+                text=extra_btn[0],
+                width=105,
+                height=30,
+                fg_color="#3b82f6",
+                hover_color="#2563eb",
+                font=ctk.CTkFont(size=12, weight="bold"),
+                command=extra_btn[1],
+            ).pack(side="left", padx=4)
 
         toggle_btn = ctk.CTkButton(
             btns,
             text="Start",
-            width=76,
-            height=28,
+            width=80,
+            height=30,
             fg_color="#10b981",
             hover_color="#059669",
+            font=ctk.CTkFont(size=12, weight="bold"),
             command=lambda: controller.stop() if controller.running else (self.save_all(silent=True), controller.start()),
         )
         toggle_btn.pack(side="left", padx=4)
@@ -637,7 +660,7 @@ class VTuberStudioApp(ctk.CTk):
         parent.grid_columnconfigure(0, weight=1)
         parent.grid_rowconfigure(0, weight=1)
 
-        scroll = ctk.CTkScrollableFrame(parent, fg_color="#f9fafd")
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="#1e1f29")
         scroll.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
         scroll.grid_columnconfigure(0, weight=1)
 
@@ -645,44 +668,44 @@ class VTuberStudioApp(ctk.CTk):
         ctk.CTkLabel(
             scroll,
             text="☆ QUICK-START GUIDE & TUTORIAL ☆",
-            font=ctk.CTkFont(family="Plus Jakarta Sans", size=18, weight="bold"),
-            text_color="#4b5d84",
-        ).pack(anchor="w", padx=16, pady=(12, 4))
+            font=ctk.CTkFont(family="Plus Jakarta Sans", size=20, weight="bold"),
+            text_color="#f8fafc",
+        ).pack(anchor="w", padx=16, pady=(14, 4))
 
         ctk.CTkLabel(
             scroll,
             text="Follow these 4 simple steps to have your AI VTuber live and answering chat in under 2 minutes.",
-            font=ctk.CTkFont(size=12),
-            text_color="#6b7280",
-        ).pack(anchor="w", padx=16, pady=(0, 14))
+            font=ctk.CTkFont(size=13),
+            text_color="#94a3b8",
+        ).pack(anchor="w", padx=16, pady=(0, 16))
 
         steps = [
             ("STEP 1: ZERO ASSET DOWNLOADS", 
-             "The Live2D model (Konata/Luna), WebGL renderers, lip-sync scripts, and fallback response brain are bundled right into the app. No downloading 3D files or manual textures required."),
+             "• The complete Live2D avatar (Konata/Luna), WebGL renderers, lip-sync scripts, and fallback brain are already bundled directly inside the app.\n• No manual 3D files, textures, or extra downloads required."),
             ("STEP 2: CONNECT AI BRAIN (TAB 2)", 
-             "• Cloud Mode (Fastest): Get a free API key at console.groq.com and paste it in Tab 2.\n• Local Mode (Offline): Install Ollama (ollama.com) and run 'ollama run qwen2.5:7b' for 100% private offline streaming."),
+             "• Cloud Mode (Fastest, ~400ms latency): Get a free API key at console.groq.com and paste it in Tab 2.\n• Local Mode (Offline): Run Ollama locally (ollama run qwen2.5:7b) for 100% private offline streaming with no internet needed."),
             ("STEP 3: AUDIO & VOICE OUTPUT (TAB 3)", 
-             "• Testing: Choose 'edge' for free neural TTS and click '🔊 Test Voice Now'.\n• VTube Studio Lip-Sync: Choose your Virtual Audio Cable ('CABLE Input') as your Audio Output Device so VTube Studio can sync mouth movements."),
-            ("STEP 4: LAUNCH STREAM OR DEMO (TAB 1)", 
-             "• Click 'Start' on the Browser Stage & Live2D Demo to test Luna in your web browser with simulated chat & Brain Inspector.\n• Click 'Start' on the Full Stream Director to connect live Twitch and TikTok chat simultaneously!")
+             "• Choose 'edge' for free neural TTS voice, or 'elevenlabs' if you have an ElevenLabs API key.\n• Click '🔊 Test Voice Now' to preview.\n• To sync mouth movements in VTube Studio, select your Virtual Audio Cable ('CABLE Input') as your output device."),
+            ("STEP 4: 1-CLICK LAUNCH (TAB 1)", 
+             "• Click 'Start' on the Browser Stage & Live2D Demo to test Luna with simulated live chat & the real-time Brain Pipeline Inspector.\n• Click 'Start' on the Full Stream Director to connect live Twitch and TikTok chat simultaneously!")
         ]
 
         for title, desc in steps:
-            card = ctk.CTkFrame(scroll, fg_color="#ffffff", border_width=1.5, border_color="#b0b8c8", corner_radius=6)
+            card = ctk.CTkFrame(scroll, fg_color="#282a36", border_width=1, border_color="#3d4052", corner_radius=8)
             card.pack(fill="x", padx=14, pady=6)
             ctk.CTkLabel(
                 card,
                 text=title,
-                font=ctk.CTkFont(size=12, weight="bold"),
-                text_color="#4b5d84",
-            ).pack(anchor="w", padx=12, pady=(8, 2))
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color="#818cf8",
+            ).pack(anchor="w", padx=14, pady=(10, 4))
             ctk.CTkLabel(
                 card,
                 text=desc,
                 justify="left",
-                font=ctk.CTkFont(size=11),
-                text_color="#2a2f3a",
-            ).pack(anchor="w", padx=12, pady=(0, 8))
+                font=ctk.CTkFont(size=12),
+                text_color="#cbd5e1",
+            ).pack(anchor="w", padx=14, pady=(0, 10))
 
         # Screenshots
         shot_path_1 = ROOT / "docs" / "screenshots" / "demo_showcase.png"
@@ -695,14 +718,14 @@ class VTuberStudioApp(ctk.CTk):
                 ctk.CTkLabel(
                     scroll,
                     text="★ Visual Reference: PictoChat Browser Stage & Live2D Avatar ★",
-                    font=ctk.CTkFont(size=13, weight="bold"),
-                    text_color="#4b5d84",
-                ).pack(anchor="w", padx=14, pady=(18, 4))
+                    font=ctk.CTkFont(size=14, weight="bold"),
+                    text_color="#f8fafc",
+                ).pack(anchor="w", padx=14, pady=(20, 6))
 
                 img1 = Image.open(str(shot_path_1))
                 w, h = img1.size
-                ratio = 600 / float(w)
-                ctk_img1 = ctk.CTkImage(light_image=img1, size=(600, int(h * ratio)))
+                ratio = 620 / float(w)
+                ctk_img1 = ctk.CTkImage(dark_image=img1, light_image=img1, size=(620, int(h * ratio)))
                 lbl1 = ctk.CTkLabel(scroll, image=ctk_img1, text="")
                 lbl1.pack(anchor="w", padx=14, pady=4)
 
@@ -710,18 +733,18 @@ class VTuberStudioApp(ctk.CTk):
                 ctk.CTkLabel(
                     scroll,
                     text="★ Visual Reference: AI VTuber Studio App Setup ★",
-                    font=ctk.CTkFont(size=13, weight="bold"),
-                    text_color="#4b5d84",
-                ).pack(anchor="w", padx=14, pady=(18, 4))
+                    font=ctk.CTkFont(size=14, weight="bold"),
+                    text_color="#f8fafc",
+                ).pack(anchor="w", padx=14, pady=(20, 6))
 
                 img2 = Image.open(str(shot_path_2))
                 w, h = img2.size
-                ratio = 600 / float(w)
-                ctk_img2 = ctk.CTkImage(light_image=img2, size=(600, int(h * ratio)))
+                ratio = 620 / float(w)
+                ctk_img2 = ctk.CTkImage(dark_image=img2, light_image=img2, size=(620, int(h * ratio)))
                 lbl2 = ctk.CTkLabel(scroll, image=ctk_img2, text="")
                 lbl2.pack(anchor="w", padx=14, pady=4)
         except Exception as e:
-            ctk.CTkLabel(scroll, text=f"(Screenshots preview unavailable: {e})").pack(anchor="w", padx=14)
+            ctk.CTkLabel(scroll, text=f"(Screenshots preview unavailable: {e})", text_color="#f87171").pack(anchor="w", padx=14)
 
     # ── Actions & Logic ─────────────────────────────────────────────────────
 
