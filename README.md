@@ -9,7 +9,7 @@ An event-driven, real-time AI streamer built in Python (`asyncio`) that ingests 
 ### 1. Interactive Browser Stage & Live2D Demo
 A self-contained browser showcase with real-time WebGL Live2D avatar animation, audio-driven RMS lip-sync, simulated multi-platform live chat, and a live Brain Pipeline Inspector showing priority routing, intent parsing, and latency metrics.
 
-![Luna Browser Demo Showcase](docs/screenshots/demo_showcase.jpg)
+![Luna Browser Demo Showcase](docs/screenshots/demo_showcase.png)
 
 ### 2. AI VTuber Studio Desktop App
 A lightweight desktop control center (`CustomTkinter`) allowing users to customize VTuber personality, switch AI models (Groq / Ollama), configure voice routing (Edge-TTS / ElevenLabs / Virtual Audio Cable), test speech in a built-in sandbox, and launch services with one click.
