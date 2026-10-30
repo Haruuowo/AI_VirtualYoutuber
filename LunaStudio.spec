@@ -10,6 +10,7 @@ datas = [
     (ctk_path, 'customtkinter'),
     ('demo/static', 'demo/static'),
     ('data', 'data'),
+    ('docs/screenshots', 'docs/screenshots'),
     ('.env.example', '.'),
 ]
 
@@ -73,3 +74,4 @@ coll = COLLECT(
     upx_exclude=[],
     name='LunaStudio',
 )
+

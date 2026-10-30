@@ -20,3 +20,4 @@ if exist "dist\LunaStudio\LunaStudio.exe" (
     echo [ERROR] Build failed. Check the output above.
 )
 pause
+

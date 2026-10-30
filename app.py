@@ -145,12 +145,13 @@ class ProcessController:
 class VTuberStudioApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
+        # Pictochat / NDS Slate aesthetic
+        ctk.set_appearance_mode("light")
+        self.configure(fg_color="#d7dbe4")
 
-        self.title("AI VTuber Studio — Control Center")
-        self.geometry("920x680")
-        self.minsize(820, 600)
+        self.title("☆ PictoChat · Luna AI VTuber Studio ☆")
+        self.geometry("960x700")
+        self.minsize(860, 620)
 
         self.env = read_env_dict()
         self.persona = load_persona_config()
@@ -187,51 +188,68 @@ class VTuberStudioApp(ctk.CTk):
     # ── Top Header ──────────────────────────────────────────────────────────
 
     def _build_header(self):
-        hdr = ctk.CTkFrame(self, fg_color=("gray88", "#16162a"), corner_radius=0, height=58)
-        hdr.pack(fill="x", side="top")
+        hdr = ctk.CTkFrame(self, fg_color="#eef1f6", border_width=2, border_color="#5c6478", corner_radius=8, height=60)
+        hdr.pack(fill="x", side="top", padx=14, pady=(10, 4))
 
         title_box = ctk.CTkFrame(hdr, fg_color="transparent")
-        title_box.pack(side="left", padx=18, pady=10)
+        title_box.pack(side="left", padx=16, pady=8)
         self.hdr_title = ctk.CTkLabel(
             title_box,
-            text=f"{self.persona['name']} · AI VTuber Studio",
-            font=ctk.CTkFont(size=18, weight="bold"),
+            text=f"★ {self.persona['name']} · AI VTuber Studio ★",
+            font=ctk.CTkFont(family="Consolas", size=18, weight="bold"),
+            text_color="#4b5d84",
         )
         self.hdr_title.pack(anchor="w")
         ctk.CTkLabel(
             title_box,
-            text="Configure your persona, voice, connections, or test in the built-in sandbox — no IDE needed.",
-            font=ctk.CTkFont(size=12),
-            text_color="gray70",
+            text="Nintendo DS PictoChat Style Control Center · Zero IDE setup required.",
+            font=ctk.CTkFont(size=11),
+            text_color="#6b7280",
         ).pack(anchor="w")
 
-        self.save_status = ctk.CTkLabel(hdr, text="", font=ctk.CTkFont(size=12), text_color="#34d399")
+        self.save_status = ctk.CTkLabel(hdr, text="", font=ctk.CTkFont(size=12, weight="bold"), text_color="#2b7a4b")
         self.save_status.pack(side="right", padx=12)
 
         ctk.CTkButton(
             hdr,
-            text="Save All Settings",
-            width=140,
-            fg_color="#7c3aed",
-            hover_color="#6d28d9",
+            text="Save Settings",
+            width=130,
+            fg_color="#4b5d84",
+            hover_color="#3b4b6b",
+            border_width=1.5,
+            border_color="#5c6478",
+            text_color="#ffffff",
+            font=ctk.CTkFont(weight="bold"),
             command=self.save_all,
-        ).pack(side="right", padx=16, pady=12)
+        ).pack(side="right", padx=14, pady=10)
 
     # ── Tabs ────────────────────────────────────────────────────────────────
 
     def _build_tabs(self):
-        self.tabs = ctk.CTkTabview(self, corner_radius=10)
-        self.tabs.pack(fill="both", expand=True, padx=16, pady=(6, 16))
+        self.tabs = ctk.CTkTabview(
+            self,
+            corner_radius=8,
+            fg_color="#f9fafd",
+            segmented_button_fg_color="#c8d3e6",
+            segmented_button_selected_color="#4b5d84",
+            segmented_button_selected_hover_color="#3b4b6b",
+            segmented_button_unselected_color="#c8d3e6",
+            segmented_button_unselected_hover_color="#b4c2da",
+            text_color="#2a2f3a",
+        )
+        self.tabs.pack(fill="both", expand=True, padx=14, pady=(4, 14))
 
         t_launch = self.tabs.add("1. Launch & Demo Test")
         t_persona = self.tabs.add("2. Persona & AI Brain")
         t_voice = self.tabs.add("3. Voice & Audio")
         t_conn = self.tabs.add("4. Stream & Minecraft")
+        t_tut = self.tabs.add("5. How to Setup & Tutorial")
 
         self._build_launch_tab(t_launch)
         self._build_persona_tab(t_persona)
         self._build_voice_tab(t_voice)
         self._build_conn_tab(t_conn)
+        self._build_tutorial_tab(t_tut)
 
     # ── Tab 1: Launch & Demo Sandbox ────────────────────────────────────────
 
@@ -612,6 +630,79 @@ class VTuberStudioApp(ctk.CTk):
         ctk.CTkLabel(m_card, text="MC Version:").grid(row=5, column=0, sticky="w", padx=14, pady=(6, 14))
         self.mc_ver_var = ctk.StringVar(value=self.env.get("MC_VERSION", "1.20.1"))
         ctk.CTkEntry(m_card, textvariable=self.mc_ver_var).grid(row=5, column=1, sticky="ew", padx=14, pady=(6, 14))
+
+    # ── Tab 5: Tutorial & Screenshots ───────────────────────────────────────
+
+    def _build_tutorial_tab(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="#f9fafd")
+        scroll.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        scroll.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            scroll,
+            text="☆ How to Setup & Run Luna (Tutorial) ☆",
+            font=ctk.CTkFont(family="Consolas", size=16, weight="bold"),
+            text_color="#4b5d84",
+        ).pack(anchor="w", padx=12, pady=(10, 6))
+
+        intro_text = (
+            "1. Zero Setup Required: The Live2D avatar model, WebAudio lip-sync, and fallback brains\n"
+            "   are already bundled inside the application! No manual asset downloading needed.\n\n"
+            "2. Fast AI Brain: Get a free API key at console.groq.com and paste it in Tab 2.\n"
+            "   (Or run Ollama locally for 100% offline private streaming).\n\n"
+            "3. Audio Routing: Tab 3 lets you test Edge-TTS or ElevenLabs, and select 'CABLE Input'\n"
+            "   if routing to VTube Studio.\n\n"
+            "4. 1-Click Launch: Head to Tab 1 and hit 'Start' on the Browser Demo or Full Stream!"
+        )
+        ctk.CTkLabel(
+            scroll,
+            text=intro_text,
+            justify="left",
+            font=ctk.CTkFont(size=12),
+            text_color="#2a2f3a",
+        ).pack(anchor="w", padx=14, pady=4)
+
+        # Embedded Tutorial Screenshots
+        shot_path_1 = ROOT / "docs" / "screenshots" / "demo_showcase.png"
+        shot_path_2 = ROOT / "docs" / "screenshots" / "studio_app.png"
+
+        try:
+            from PIL import Image
+
+            if shot_path_1.exists():
+                ctk.CTkLabel(
+                    scroll,
+                    text="Screenshot: Browser Stage & Live2D Demo (PictoChat Theme)",
+                    font=ctk.CTkFont(size=13, weight="bold"),
+                    text_color="#4b5d84",
+                ).pack(anchor="w", padx=12, pady=(16, 4))
+
+                img1 = Image.open(str(shot_path_1))
+                w, h = img1.size
+                ratio = 560 / float(w)
+                ctk_img1 = ctk.CTkImage(light_image=img1, size=(560, int(h * ratio)))
+                lbl1 = ctk.CTkLabel(scroll, image=ctk_img1, text="")
+                lbl1.pack(anchor="w", padx=12, pady=4)
+
+            if shot_path_2.exists():
+                ctk.CTkLabel(
+                    scroll,
+                    text="Screenshot: AI VTuber Studio App Setup",
+                    font=ctk.CTkFont(size=13, weight="bold"),
+                    text_color="#4b5d84",
+                ).pack(anchor="w", padx=12, pady=(16, 4))
+
+                img2 = Image.open(str(shot_path_2))
+                w, h = img2.size
+                ratio = 560 / float(w)
+                ctk_img2 = ctk.CTkImage(light_image=img2, size=(560, int(h * ratio)))
+                lbl2 = ctk.CTkLabel(scroll, image=ctk_img2, text="")
+                lbl2.pack(anchor="w", padx=12, pady=4)
+        except Exception as e:
+            ctk.CTkLabel(scroll, text=f"(Screenshots preview unavailable: {e})").pack(anchor="w", padx=12)
 
     # ── Actions & Logic ─────────────────────────────────────────────────────
 
