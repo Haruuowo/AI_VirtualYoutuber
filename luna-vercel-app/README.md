@@ -31,3 +31,4 @@ A standalone web chatbot deployment of **Luna AI**, ready to deploy on **Vercel*
 1. You can push this folder to its own GitHub repository or connect your existing repo to Vercel with the **Root Directory** set to `luna-vercel-app`.
 2. Add `GROQ_API_KEY` in your Vercel Project Environment Variables.
 3. Deploy!
+

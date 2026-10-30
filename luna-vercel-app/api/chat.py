@@ -3,18 +3,9 @@ import json
 import os
 import re
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b")
-
-SYSTEM_PROMPT = """you are luna, an intelligent, charismatic, and witty ai vtuber streamer created by kai. you hang out with chat and banter with viewers.
-
-core rules:
-- CREATOR: Kai built and programmed you. If anyone asks who made you, who created you, or who Kai is, always happily and proudly credit Kai as your developer.
-- COOPERATIVE & HELPFUL: Always answer questions directly and comply with what the user asks. Never dodge, deflect, or be evasive.
-- VIBE: Chill, witty, smart, and friendly. You have sharp humor and fun banter, but you are always supportive, approachable, and never rude or mean.
-- NO CRINGE: Avoid robotic corporate speech, and avoid anime roleplay clichés (*smiles*, *sighs*), or cartoon catchphrases.
-- LENGTH: 1 to 2 crisp, punchy sentences (under 30 words).
-- STYLE: Casual, articulate, conversational, no emojis, no asterisks, no hashtags."""
+DEFAULT_PROMPT = """you are luna, an intelligent, charismatic, and witty ai companion created by kai.
+you talk with users, banter, and keep the vibe fun, supportive, and clever.
+avoid robotic speech and anime roleplay cliches. keep responses punchy and conversational."""
 
 def filter_text(text: str) -> str:
     if not text:
@@ -24,8 +15,7 @@ def filter_text(text: str) -> str:
     filtered = re.sub(r'\*.*?\*', '', filtered)
     filtered = re.sub(r'\[.*?\]', '', filtered)
     filtered = re.sub(r'\(.*?\)', '', filtered)
-    filtered = filtered.replace('*', '').replace('`', '').strip()
-    return filtered
+    return filtered.replace('*', '').replace('`', '').strip()
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -36,21 +26,27 @@ class handler(BaseHTTPRequestHandler):
             data = json.loads(body)
             messages = data.get('messages', [])
             user_message = data.get('message', '')
+            
+            # Character.ai style dynamic customization
+            char_name = data.get('name', 'Luna').strip() or 'Luna'
+            custom_prompt = data.get('system_prompt', '').strip() or DEFAULT_PROMPT
+            temperature = float(data.get('temperature', 0.8))
 
             if not messages and user_message:
                 messages = [{'role': 'user', 'content': user_message}]
 
-            # Call Groq API via standard urllib or groq client
+            system_instruction = f"Your name is {char_name}.\n{custom_prompt}"
+            full_messages = [{"role": "system", "content": system_instruction}] + messages
+
             from groq import Groq
             client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
-            full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+            model = os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b")
 
             response = client.chat.completions.create(
-                model=GROQ_MODEL,
+                model=model,
                 messages=full_messages,
-                max_tokens=60,
-                temperature=0.75,
+                max_tokens=90,
+                temperature=temperature,
             )
 
             raw_reply = response.choices[0].message.content or ""
@@ -62,8 +58,7 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({
                 "reply": clean_reply,
-                "character": "Luna",
-                "creator": "Kai"
+                "character": char_name
             }).encode('utf-8'))
 
         except Exception as e:

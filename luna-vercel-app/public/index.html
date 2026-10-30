@@ -3,17 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Luna AI · PictoChat Web</title>
+  <title>Luna AI · Character Chat</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #1c1f26;
-      --surface: #242933;
-      --card: #2c3240;
-      --border: #475063;
-      --accent: #818cf8;
-      --text: #f1f5f9;
+      --bg: #13151b;
+      --sidebar: #1a1d26;
+      --card: #222632;
+      --border: #313746;
+      --accent: #6366f1;
+      --text: #f8fafc;
       --muted: #94a3b8;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -22,162 +22,277 @@
       background: var(--bg);
       color: var(--text);
       display: flex;
-      flex-direction: column;
       height: 100vh;
       overflow: hidden;
     }
-    header {
-      background: var(--surface);
-      border-bottom: 2px solid var(--border);
-      padding: 12px 20px;
+
+    /* Left Sidebar: Character Customizer (Character.AI style) */
+    .sidebar {
+      width: 320px;
+      background: var(--sidebar);
+      border-right: 1px solid var(--border);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+    }
+    .char-profile {
+      text-align: center;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .char-avatar {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      display: grid;
+      place-items: center;
+      font-size: 28px;
+      font-weight: 800;
+      margin: 0 auto 10px;
+      border: 2px solid var(--border);
+    }
+    .field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    input, textarea {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+    }
+    textarea { height: 110px; resize: none; line-height: 1.45; }
+    input:focus, textarea:focus { border-color: var(--accent); }
+    .btn-reset {
+      background: #2a2f3e;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-reset:hover { color: var(--text); background: #373e52; }
+
+    /* Right Main Chat Area */
+    .chat-view {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+    }
+    .chat-header {
+      padding: 14px 24px;
+      background: var(--sidebar);
+      border-bottom: 1px solid var(--border);
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
-    .brand { font-size: 16px; font-weight: 800; color: var(--accent); }
-    .badge { font-size: 11px; font-weight: 700; background: #3b4252; padding: 3px 8px; border-radius: 4px; color: var(--muted); }
-    .chat-container {
+    .chat-messages {
       flex: 1;
-      padding: 16px;
+      padding: 24px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      background: radial-gradient(#2d3340 1px, transparent 1px) 0 0/20px 20px, var(--bg);
+      gap: 14px;
     }
-    .message {
-      max-width: 80%;
-      padding: 10px 14px;
-      border-radius: 8px;
+    .msg {
+      max-width: 70%;
+      padding: 12px 16px;
+      border-radius: 12px;
       font-size: 14px;
       line-height: 1.5;
-      border: 1px solid var(--border);
-      animation: popIn 0.2s ease;
+      animation: fadeIn 0.2s ease;
     }
-    .message.user {
+    .msg.user {
       align-self: flex-end;
-      background: #3b4252;
-      color: #eceff4;
+      background: var(--accent);
+      color: #ffffff;
+      border-bottom-right-radius: 4px;
     }
-    .message.luna {
+    .msg.bot {
       align-self: flex-start;
       background: var(--card);
-      border-left: 3px solid var(--accent);
-    }
-    .message .sender { font-weight: 800; font-size: 11px; margin-bottom: 3px; color: var(--accent); }
-    .footer-bar {
-      padding: 12px 16px;
-      background: var(--surface);
-      border-top: 2px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .chips { display: flex; gap: 6px; overflow-x: auto; }
-    .chip {
-      background: var(--card);
       border: 1px solid var(--border);
-      color: var(--text);
-      font-size: 11px;
-      font-weight: 600;
-      padding: 4px 10px;
-      border-radius: 12px;
-      cursor: pointer;
-      white-space: nowrap;
+      border-bottom-left-radius: 4px;
     }
-    .chip:hover { background: #3b4252; }
-    form { display: flex; gap: 8px; }
-    input {
+    .msg .author {
+      font-size: 11px;
+      font-weight: 800;
+      margin-bottom: 4px;
+      opacity: 0.8;
+    }
+    .input-bar {
+      padding: 16px 24px;
+      background: var(--sidebar);
+      border-top: 1px solid var(--border);
+    }
+    .input-bar form {
+      display: flex;
+      gap: 10px;
+    }
+    .input-bar input {
       flex: 1;
       background: var(--card);
       border: 1px solid var(--border);
       color: var(--text);
-      padding: 10px 14px;
-      border-radius: 6px;
+      padding: 12px 16px;
+      border-radius: 8px;
       font-size: 14px;
-      outline: none;
     }
-    input:focus { border-color: var(--accent); }
-    button.send {
+    .input-bar button {
       background: var(--accent);
       color: #ffffff;
       border: none;
-      padding: 0 20px;
-      border-radius: 6px;
+      padding: 0 24px;
+      border-radius: 8px;
       font-weight: 700;
       cursor: pointer;
     }
-    button.send:hover { opacity: 0.9; }
-    @keyframes popIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .input-bar button:hover { opacity: 0.9; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: none; }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">★ LUNA AI · PICTOCHAT ★</div>
-    <div class="badge">Vercel Serverless</div>
-  </header>
 
-  <div class="chat-container" id="chat">
-    <div class="message luna">
-      <div class="sender">Luna</div>
-      hey! good to see you. what are we getting into today?
+  <!-- Character Customizer Sidebar (c.ai style) -->
+  <aside class="sidebar">
+    <div class="char-profile">
+      <div class="char-avatar" id="avatarIcon">L</div>
+      <h3 id="charTitle">Luna</h3>
+      <p style="font-size: 12px; color: var(--muted); margin-top: 2px;">Customizable AI Companion</p>
     </div>
-  </div>
 
-  <div class="footer-bar">
-    <div class="chips">
-      <div class="chip" onclick="quickSend('Who made you?')">Who made you?</div>
-      <div class="chip" onclick="quickSend('What can you do?')">What can you do?</div>
-      <div class="chip" onclick="quickSend('Tell me a streamer thought')">Streamer thought</div>
+    <div class="field">
+      <label>Character Name</label>
+      <input id="charName" value="Luna" placeholder="Character name" />
     </div>
-    <form id="chatForm">
-      <input id="inputMsg" placeholder="Say something to Luna..." autocomplete="off" />
-      <button class="send" type="submit">Send</button>
-    </form>
-  </div>
+
+    <div class="field">
+      <label>Personality & System Prompt</label>
+      <textarea id="charPrompt" placeholder="Describe personality, tone, quirks, or backstory...">you are luna, a charismatic and witty companion created by kai. keep responses clever, engaging, and friendly without robotic phrases.</textarea>
+    </div>
+
+    <div class="field">
+      <label>Creativity (Temperature)</label>
+      <input id="charTemp" type="range" min="0.2" max="1.2" step="0.1" value="0.8" />
+    </div>
+
+    <button class="btn-reset" onclick="clearHistory()">Clear Chat History</button>
+  </aside>
+
+  <!-- Chat View Area -->
+  <main class="chat-view">
+    <header class="chat-header">
+      <div>
+        <b id="headName">Luna</b>
+        <span style="font-size: 12px; color: var(--muted); margin-left: 8px;">● Online</span>
+      </div>
+    </header>
+
+    <div class="chat-messages" id="messages">
+      <div class="msg bot">
+        <div class="author" id="botLabel">Luna</div>
+        hey! good to see you. what are we talking about today?
+      </div>
+    </div>
+
+    <div class="input-bar">
+      <form id="msgForm">
+        <input id="msgInput" placeholder="Message Luna..." autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  </main>
 
   <script>
-    const chat = document.getElementById('chat');
-    const form = document.getElementById('chatForm');
-    const input = document.getElementById('inputMsg');
-    const history = [];
+    const messagesEl = document.getElementById('messages');
+    const msgForm = document.getElementById('msgForm');
+    const msgInput = document.getElementById('msgInput');
+    const charName = document.getElementById('charName');
+    const charPrompt = document.getElementById('charPrompt');
+    const charTemp = document.getElementById('charTemp');
+    const avatarIcon = document.getElementById('avatarIcon');
+    const charTitle = document.getElementById('charTitle');
+    const headName = document.getElementById('headName');
+    const botLabel = document.getElementById('botLabel');
 
-    function addMessage(sender, text, isUser) {
-      const msg = document.createElement('div');
-      msg.className = `message ${isUser ? 'user' : 'luna'}`;
-      msg.innerHTML = `<div class="sender">${sender}</div>${text}`;
-      chat.appendChild(msg);
-      chat.scrollTop = chat.scrollHeight;
+    let history = [];
+
+    charName.addEventListener('input', () => {
+      const name = charName.value.trim() || 'AI';
+      avatarIcon.textContent = name[0].toUpperCase();
+      charTitle.textContent = name;
+      headName.textContent = name;
+      botLabel.textContent = name;
+      msgInput.placeholder = `Message ${name}...`;
+    });
+
+    function appendMessage(sender, text, isUser) {
+      const el = document.createElement('div');
+      el.className = `msg ${isUser ? 'user' : 'bot'}`;
+      el.innerHTML = `<div class="author">${sender}</div>${text}`;
+      messagesEl.appendChild(el);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    async function send(text) {
+    async function sendUserMessage(text) {
       if (!text.trim()) return;
-      addMessage('You', text, true);
+      appendMessage('You', text, true);
       history.push({ role: 'user', content: text });
 
       try {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history })
+          body: JSON.stringify({
+            name: charName.value.trim(),
+            system_prompt: charPrompt.value.trim(),
+            temperature: charTemp.value,
+            messages: history
+          })
         });
+
         const data = await res.json();
-        const reply = data.reply || data.error || "Hmm, brain lag.";
-        addMessage('Luna', reply, false);
+        const reply = data.reply || data.error || 'No response.';
+        appendMessage(charName.value.trim() || 'Luna', reply, false);
         history.push({ role: 'assistant', content: reply });
       } catch (err) {
-        addMessage('Luna', 'Connection error to Vercel API.', false);
+        appendMessage('System', 'Failed to reach API server.', false);
       }
     }
 
-    form.onsubmit = (e) => {
+    msgForm.onsubmit = (e) => {
       e.preventDefault();
-      const text = input.value;
-      input.value = '';
-      send(text);
+      const txt = msgInput.value;
+      msgInput.value = '';
+      sendUserMessage(txt);
     };
 
-    function quickSend(txt) { send(txt); }
+    function clearHistory() {
+      history = [];
+      messagesEl.innerHTML = '';
+      appendMessage(charName.value.trim() || 'Luna', 'Memory cleared. What should we chat about now?', false);
+    }
   </script>
 </body>
 </html>
