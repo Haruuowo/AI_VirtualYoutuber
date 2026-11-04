@@ -36,6 +36,8 @@ class VoiceHandler:
         if self.tts_engine in ('none', 'off', 'disabled'):
             self.tts_enabled = False
         self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AnaNeural').strip()
+        self.voice_pitch = os.getenv('VOICE_PITCH', '-5Hz').strip()
+        self.voice_rate = os.getenv('VOICE_RATE', '+0%').strip()
         self.ref_audio_path = os.getenv('REF_AUDIO_PATH', '').strip()
         self.device_id = None
         self.is_speaking = False
@@ -129,7 +131,7 @@ class VoiceHandler:
     async def _play_edge_tts(self, text):
         try:
             import edge_tts
-            communicate = edge_tts.Communicate(text, self.edge_voice)
+            communicate = edge_tts.Communicate(text, self.edge_voice, pitch=self.voice_pitch, rate=self.voice_rate)
             await communicate.save(TEMP_MP3)
 
             await asyncio.to_thread(mp3_to_wav, TEMP_MP3, TEMP_WAV)
