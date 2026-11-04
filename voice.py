@@ -35,7 +35,7 @@ class VoiceHandler:
         self.tts_engine = os.getenv('TTS_ENGINE', 'edge').lower().strip()
         if self.tts_engine in ('none', 'off', 'disabled'):
             self.tts_enabled = False
-        self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AriaNeural').strip()
+        self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AnaNeural').strip()
         self.ref_audio_path = os.getenv('REF_AUDIO_PATH', '').strip()
         self.device_id = None
         self.is_speaking = False

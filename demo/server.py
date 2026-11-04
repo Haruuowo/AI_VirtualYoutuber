@@ -160,7 +160,9 @@ class WebVoiceHandler:
     async def _tts(self, text):
         import edge_tts
         audio = bytearray()
-        async for chunk in edge_tts.Communicate(text, EDGE_VOICE, rate="+8%", pitch="+12Hz").stream():
+        rate = os.getenv("VOICE_RATE", "+0%")
+        pitch = os.getenv("VOICE_PITCH", "+0Hz")
+        async for chunk in edge_tts.Communicate(text, EDGE_VOICE, rate=rate, pitch=pitch).stream():
             if chunk["type"] == "audio":
                 audio.extend(chunk["data"])
         return bytes(audio)
