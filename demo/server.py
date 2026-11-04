@@ -102,9 +102,9 @@ def _pick_provider():
 
 
 OFFLINE_REPLIES = [
-    "my cloud brain is napping, so you get the backup luna. still smarter than a creeper though.",
-    "running on offline mode right now, but kai built me to keep the show going no matter what.",
-    "no internet brain at the moment, but i am still here vibing with chat.",
+    "my cloud brain is taking a quick breath, but i am still here chilling with chat.",
+    "running in offline backup mode right now, but kai built me to keep the conversation going no matter what.",
+    "no cloud connection at the moment, but i am still all ears. what's on your mind?",
 ]
 
 
@@ -205,15 +205,15 @@ class WebMinecraftController:
 
 # ── Simulated viewers ───────────────────────────────────────────────────────
 
-VIEWERS = ["pixelpanda", "creeper_hugger", "nightowl_dev", "mochi_bun", "steve_irl",
-           "lofi_luke", "byte_sized", "sakura_rain", "diamond_dan", "glitchqueen"]
+VIEWERS = ["pixelpanda", "cyber_cat", "nightowl_dev", "mochi_bun", "dev_alex",
+           "lofi_luke", "byte_sized", "sakura_rain", "cloud_surfer", "glitchqueen"]
 VIEWER_LINES = [
-    "luna what are you up to today?", "first time here, this is so cool", "LUNA mine some diamonds",
-    "is luna actually an AI??", "luna who made you", "what's your favorite minecraft mob luna",
-    "the vibes are immaculate", "luna come here", "hi chat", "luna rate my setup out of 10",
-    "can you sing something luna", "luna build me a house", "lol", "luna protect me from the creepers",
-    "what game should we play next", "luna tell us a fun fact", "luna do you dream?",
-    "w stream", "luna explore with me", "how fast is your brain luna",
+    "luna what are you up to today?", "first time here, this is so cool", "what tech stack are you running on?",
+    "is luna actually an AI??", "luna who made you", "what's your favorite programming language?",
+    "the vibes are immaculate", "luna tell me a joke", "hi chat", "luna rate my setup out of 10",
+    "can you explain how your voice works?", "roast my code luna", "lol", "what model are you running?",
+    "what game should we play next", "luna tell us a fun tech fact", "luna do you dream of electric sheep?",
+    "w stream", "how fast is your response latency?", "show them what you can do luna",
 ]
 PLATFORMS = ["Twitch", "TikTok"]
 

@@ -119,7 +119,7 @@
   $("howClose").addEventListener("click", () => ($("howModal").hidden = true));
   $("howModal").addEventListener("click", (e) => { if (e.target.id === "howModal") $("howModal").hidden = true; });
 
-  // ── Brain panel ──────────────────────────────────────────────────
+  // ── Brain pipeline handler (safe if panel hidden) ─────────────────
   let pendingLLM = null;
   function pulse(node) {
     const el = document.querySelector(`.node[data-n="${node}"]`);
@@ -130,6 +130,7 @@
   }
   function row(icon, html, ms, cls = "") {
     const log = $("brainlog");
+    if (!log) return null;
     clearEmpty(log);
     const el = document.createElement("div");
     el.className = "row " + cls;
@@ -140,9 +141,23 @@
     return el;
   }
   function brain(m) {
+    if (m.stage === "llm_start") {
+      pulse("llm");
+      const th = $("thinking");
+      if (th) th.classList.add("on");
+    }
+    if (m.stage === "llm_done") {
+      const th = $("thinking");
+      if (th) th.classList.remove("on");
+    }
+    if (m.stage === "reset") {
+      addChat("System", "Short-term conversation memory cleared.", "Console");
+    }
+    const log = $("brainlog");
+    if (!log) return;
     switch (m.stage) {
       case "route":
-        if ($("brainlog").children.length) { const s = row("", "<hr>", null, "sep"); }
+        if (log.children && log.children.length) { const s = row("", "<hr>", null, "sep"); }
         pulse("route");
         row("📥", `<b>${esc(m.user)}</b> <em>(${esc(m.platform)})</em>: “${esc(m.text)}”`);
         row(m.priority.startsWith("P1") ? "🎯" : "📦", `route → <b>${m.priority}</b> <em>· ${esc(m.reason)}</em>`);
@@ -150,14 +165,12 @@
       case "intent":
         pulse("intent");
         if (m.intent === "conversation") row("💬", `intent → conversation`);
-        else row("⛏️", `intent → <b>minecraft.${esc(m.intent)}</b> <em>${esc(JSON.stringify(m.params))}</em>`);
+        else row("⛏️", `intent → <b>game.${esc(m.intent)}</b> <em>${esc(JSON.stringify(m.params))}</em>`);
         break;
       case "llm_start":
-        pulse("llm"); $("thinking").classList.add("on");
         pendingLLM = row("🧠", `<span class="spin"></span> ${esc(m.provider)} / ${esc(m.model)} <em>· mood: ${esc(m.mood || "-")}</em>`);
         break;
       case "llm_done": {
-        $("thinking").classList.remove("on");
         const html = `${m.ok ? "LLM reply" : "fallback reply"} <em>· mood: ${esc(m.mood || "-")}</em>`;
         if (pendingLLM) pendingLLM.remove();
         pendingLLM = null;

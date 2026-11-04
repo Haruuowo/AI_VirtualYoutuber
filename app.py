@@ -240,7 +240,7 @@ class VTuberStudioApp(ctk.CTk):
         t_launch = self.tabs.add("1. Launch & Demo Test")
         t_persona = self.tabs.add("2. Persona & AI Brain")
         t_voice = self.tabs.add("3. Voice & Audio")
-        t_conn = self.tabs.add("4. Stream & Minecraft")
+        t_conn = self.tabs.add("4. Stream & Game Bridges")
         t_tut = self.tabs.add("5. How to Setup & Tutorial")
 
         self._build_launch_tab(t_launch)
@@ -266,7 +266,7 @@ class VTuberStudioApp(ctk.CTk):
         self._make_service_card(
             left, 0, "demo",
             "Browser Stage & Live2D Demo",
-            "Opens Live2D avatar + Brain inspector in browser",
+            "Opens Live2D avatar + Full Interactive Chat in browser",
             self.proc_demo,
             extra_btn=("Open Browser", lambda: webbrowser.open(self.demo_url)),
         )
@@ -325,7 +325,7 @@ class VTuberStudioApp(ctk.CTk):
 
         chips = ctk.CTkFrame(right, fg_color="transparent")
         chips.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
-        for prompt in ["Who made you?", "Luna, mine some diamonds", "Luna, protect me", "Roast my setup"]:
+        for prompt in ["Who made you?", "What's your tech stack?", "What can you do?", "Roast my code"]:
             ctk.CTkButton(
                 chips,
                 text=prompt,

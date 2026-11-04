@@ -6,7 +6,7 @@
   <title>Luna · AI VTuber</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=3" />
+  <link rel="stylesheet" href="/static/style.css?v=5" />
 </head>
 <body>
 
@@ -16,11 +16,11 @@
       <div class="intro-glow"></div>
       <div class="intro-badge">AI VTUBER · BUILT BY KAI</div>
       <h1>Luna</h1>
-      <p class="intro-sub">An autonomous AI streamer that reads live chat, decides what matters,
-        talks back with a real voice, and controls a Minecraft bot.</p>
+      <p class="intro-sub">An autonomous interactive AI streamer that reads live chat, decides what matters,
+        talks back with low-latency neural TTS, and reacts with full Live2D animation.</p>
       <div class="intro-tech">
         <span>Python · asyncio</span><span>LLM (Groq / Ollama)</span><span>Neural TTS</span>
-        <span>Live2D</span><span>Mineflayer bot</span><span>WebSockets</span>
+        <span>Live2D Lip-sync</span><span>Multi-platform Chat</span><span>WebSockets</span>
       </div>
       <button id="goLive" class="btn-live"><span class="dot"></span> Go Live</button>
       <div class="intro-status" id="introStatus">connecting to Luna's brain…</div>
@@ -76,44 +76,29 @@
       <div class="panel chat-panel">
         <div class="panel-head">
           <div class="panel-title">Live Chat</div>
-          <label class="toggle" title="Simulate Twitch / TikTok viewers">
-            <input type="checkbox" id="simToggle" />
-            <span class="track"><span class="thumb"></span></span>
-            <span class="toggle-label">simulate viewers</span>
-          </label>
+          <div class="panel-actions">
+            <button class="btn-ghost sm" id="resetBtn" title="Clear Luna's short-term memory">Reset Memory</button>
+            <label class="toggle" title="Simulate Twitch / TikTok viewers">
+              <input type="checkbox" id="simToggle" />
+              <span class="track"><span class="thumb"></span></span>
+              <span class="toggle-label">simulate viewers</span>
+            </label>
+          </div>
         </div>
         <div class="chatlog" id="chatlog">
           <div class="empty">Welcome to the stream 👋<br><span>Type below, tap a suggestion, or turn on <b>simulate viewers</b>.</span></div>
         </div>
         <div class="chips" id="chips">
           <button>Who made you?</button>
-          <button>Luna, mine some diamonds</button>
-          <button>Luna, protect me from the creepers</button>
-          <button>What can you actually do?</button>
+          <button>What's your tech stack?</button>
+          <button>What can you do?</button>
           <button>Roast my code, Luna</button>
+          <button>Tell us a fun tech fact</button>
         </div>
         <form class="chatform" id="chatform" autocomplete="off">
           <input id="chatInput" placeholder="Say something to Luna…" maxlength="300" />
           <button type="submit" class="btn-send">Send</button>
         </form>
-      </div>
-
-      <div class="panel brain-panel">
-        <div class="panel-head">
-          <div class="panel-title">Brain <span class="muted">· live pipeline</span></div>
-          <button class="btn-ghost sm" id="resetBtn" title="Clear Luna's short-term memory">reset memory</button>
-        </div>
-        <div class="pipeline" id="pipeline">
-          <div class="node" data-n="chat">Chat</div><i></i>
-          <div class="node" data-n="route">Router</div><i></i>
-          <div class="node" data-n="intent">Intent</div><i></i>
-          <div class="node" data-n="llm">LLM</div><i></i>
-          <div class="node" data-n="tts">TTS</div><i></i>
-          <div class="node" data-n="avatar">Avatar</div>
-        </div>
-        <div class="brainlog" id="brainlog">
-          <div class="empty">Every message Luna handles is traced here:<br><span>routing priority → intent → LLM latency → voice synthesis.</span></div>
-        </div>
       </div>
     </aside>
   </main>
@@ -124,39 +109,39 @@
       <button class="modal-x" id="howClose">✕</button>
       <h2>How Luna works</h2>
       <p class="muted">One async Python process orchestrates every input and output. This demo runs the
-        <b>same</b> <code>StreamDirector</code> as the live stream, with web adapters swapped in for speakers, Twitch and Minecraft.</p>
+        <b>same</b> <code>StreamDirector</code> architecture as the live stream, with web adapters swapped in for speakers and live streams.</p>
 
       <div class="arch">
         <div class="arch-col">
           <div class="arch-h">Inputs</div>
-          <div class="box">Twitch chat</div><div class="box">TikTok Live</div><div class="box">Microphone (STT)</div><div class="box">Minecraft events</div>
+          <div class="box">Twitch chat</div><div class="box">TikTok Live</div><div class="box">Microphone (STT)</div><div class="box">Interactive Console</div>
         </div>
         <div class="arch-arrow">→</div>
         <div class="arch-col">
           <div class="arch-h">StreamDirector</div>
-          <div class="box hl">Priority router<small>P0 danger … P4 idle banter</small></div>
-          <div class="box hl">Intent parser<small>regex → game actions, 0 ms</small></div>
-          <div class="box hl">Speech queue<small>priority + TTL, one voice at a time</small></div>
+          <div class="box hl">Priority router<small>P1 direct mentions … P3 background chatter</small></div>
+          <div class="box hl">Intent parser<small>regex & semantic router, 0 ms</small></div>
+          <div class="box hl">Speech queue<small>priority + TTL, non-blocking</small></div>
         </div>
         <div class="arch-arrow">→</div>
         <div class="arch-col">
           <div class="arch-h">Brain</div>
           <div class="box">LLM persona<small>Groq ⇄ Ollama auto-failover</small></div>
-          <div class="box">Rolling memory<small>last 16 turns + game state</small></div>
+          <div class="box">Rolling memory<small>last 16 conversation turns</small></div>
           <div class="box">Output filter<small>TTS-safe, moderated</small></div>
         </div>
         <div class="arch-arrow">→</div>
         <div class="arch-col">
           <div class="arch-h">Outputs</div>
-          <div class="box">Neural TTS voice</div><div class="box">Live2D avatar + lip-sync</div><div class="box">Mineflayer bot (Node.js)</div><div class="box">In-game chat</div>
+          <div class="box">Neural TTS voice</div><div class="box">Live2D avatar + lip-sync</div><div class="box">Multi-track audio</div><div class="box">Stream chat response</div>
         </div>
       </div>
 
       <div class="how-grid">
         <div><b>Real-time & concurrent</b><p>asyncio event loop; blocking LLM calls run in worker threads so chat never stalls.</p></div>
         <div><b>Never goes silent</b><p>Provider failover (cloud ⇄ local) and scripted fallback keep the stream alive.</p></div>
-        <div><b>Decides what matters</b><p>Mentions and game danger jump the queue; stale replies expire via TTL.</p></div>
-        <div><b>Plays the game</b><p>Chat commands become Mineflayer actions over an HTTP bridge to a Node.js bot.</p></div>
+        <div><b>Decides what matters</b><p>Direct questions and mentions jump the queue; stale replies expire cleanly via TTL.</p></div>
+        <div><b>Expressive Live2D</b><p>WebAudio lip-sync drives avatar mouth and expressions synchronously with voice.</p></div>
       </div>
     </div>
   </div>
@@ -164,7 +149,7 @@
   <script src="/static/vendor/live2dcubismcore.min.js"></script>
   <script src="/static/vendor/pixi.min.js"></script>
   <script src="/static/vendor/cubism4.min.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=5"></script>
 </body>
 </html>
 
