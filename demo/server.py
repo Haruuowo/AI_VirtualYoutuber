@@ -4,7 +4,7 @@ Luna Interview Demo - one-command browser showcase.
 Runs Luna's *real* StreamDirector (priority routing, intent detection,
 speech queue) but swaps the hardware-bound adapters for web ones:
 
-    VoiceHandler        -> WebVoiceHandler   (edge-tts audio streamed to the browser)
+    VoiceHandler        -> WebVoiceHandler   (text-only until a local TTS is wired in)
     MinecraftController -> WebMinecraftController (actions shown as overlay events)
     Twitch / TikTok     -> browser chat box + optional simulated viewers
 
@@ -54,7 +54,7 @@ def _find_open_port(preferred: int = 8000) -> int:
 
 
 PORT = _find_open_port(int(os.getenv("DEMO_PORT", "8000")))
-EDGE_VOICE = os.getenv("EDGE_VOICE", "en-US-AnaNeural")
+VOICE_NAME = "none"
 
 
 # ── Event bus (thread-safe fan-out to every connected browser) ──────────────
@@ -158,14 +158,8 @@ class WebVoiceHandler:
         self._done.set()
 
     async def _tts(self, text):
-        import edge_tts
-        audio = bytearray()
-        rate = os.getenv("VOICE_RATE", "+0%")
-        pitch = os.getenv("VOICE_PITCH", "-5Hz")
-        async for chunk in edge_tts.Communicate(text, EDGE_VOICE, rate=rate, pitch=pitch).stream():
-            if chunk["type"] == "audio":
-                audio.extend(chunk["data"])
-        return bytes(audio)
+        # shortcut: demo is text-only, wire in the local TTS (OmniVoice) here once it is set up
+        return b""
 
     async def generate_and_play_audio(self, text):
         self.is_speaking = True
@@ -179,7 +173,7 @@ class WebVoiceHandler:
             ms = round((time.perf_counter() - t0) * 1000)
             if audio_b64:
                 stats["tts_ms"].append(ms)
-            bus.emit("brain", stage="tts_done", ms=ms, voice=EDGE_VOICE, ok=bool(audio_b64))
+            bus.emit("brain", stage="tts_done", ms=ms, voice=VOICE_NAME, ok=bool(audio_b64))
 
             stats["replies"] += 1
             self._done.clear()
@@ -310,7 +304,7 @@ async def ws_endpoint(ws: WebSocket):
     await ws.send_text(json.dumps({
         "type": "hello",
         "name": ai.character_name, "creator": ai.creator_name,
-        "provider": state["provider"], "model": ai.model, "voice": EDGE_VOICE,
+        "provider": state["provider"], "model": ai.model, "voice": VOICE_NAME,
         "sim": sim["enabled"], "viewers": sim["viewers"], **_stats(),
     }))
     try:

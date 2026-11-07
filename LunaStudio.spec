@@ -25,7 +25,6 @@ a = Analysis(
         'websockets',
         'sounddevice',
         'soundfile',
-        'edge_tts',
         'groq',
         'customtkinter',
         'core',

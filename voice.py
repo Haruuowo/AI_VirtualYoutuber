@@ -32,12 +32,9 @@ class VoiceHandler:
         self.audio_device = os.getenv('AUDIO_DEVICE', '').strip()
         self.elevenlabs_key = os.getenv('ELEVENLABS_API_KEY', '').strip()
         self.voice_id = os.getenv('ELEVENLABS_VOICE_ID', '').strip()
-        self.tts_engine = os.getenv('TTS_ENGINE', 'edge').lower().strip()
+        self.tts_engine = os.getenv('TTS_ENGINE', 'gptsovits').lower().strip()
         if self.tts_engine in ('none', 'off', 'disabled'):
             self.tts_enabled = False
-        self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AnaNeural').strip()
-        self.voice_pitch = os.getenv('VOICE_PITCH', '-5Hz').strip()
-        self.voice_rate = os.getenv('VOICE_RATE', '+0%').strip()
         self.ref_audio_path = os.getenv('REF_AUDIO_PATH', '').strip()
         self.device_id = None
         self.is_speaking = False
@@ -60,17 +57,11 @@ class VoiceHandler:
         try:
             self.is_speaking = True
             if self.tts_engine == 'gptsovits':
-                success = await self._play_gptsovits(text)
-                if not success:
-                    print("GPT-SoVITS failed, falling back to edge-tts...")
-                    await self._play_edge_tts(text)
+                await self._play_gptsovits(text)
             elif self.tts_engine == 'elevenlabs' and self.elevenlabs_key and self.voice_id:
-                success = await self._play_elevenlabs(text)
-                if not success:
-                    print("ElevenLabs failed, falling back to edge-tts...")
-                    await self._play_edge_tts(text)
+                await self._play_elevenlabs(text)
             else:
-                await self._play_edge_tts(text)
+                print(f"No usable TTS engine for TTS_ENGINE={self.tts_engine!r}; skipping speech.")
         except Exception as e:
             print(f"Audio error: {e}")
         finally:
@@ -123,24 +114,6 @@ class VoiceHandler:
         except Exception as e:
             print(f"ElevenLabs error: {e}")
             return False
-        finally:
-            for p in [TEMP_MP3, TEMP_WAV]:
-                if os.path.exists(p):
-                    os.remove(p)
-
-    async def _play_edge_tts(self, text):
-        try:
-            import edge_tts
-            communicate = edge_tts.Communicate(text, self.edge_voice, pitch=self.voice_pitch, rate=self.voice_rate)
-            await communicate.save(TEMP_MP3)
-
-            await asyncio.to_thread(mp3_to_wav, TEMP_MP3, TEMP_WAV)
-
-            data, samplerate = sf.read(TEMP_WAV)
-            sd.play(data, samplerate, device=self.device_id)
-            sd.wait()
-        except Exception as e:
-            print(f"edge-tts error: {e}")
         finally:
             for p in [TEMP_MP3, TEMP_WAV]:
                 if os.path.exists(p):

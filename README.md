@@ -12,7 +12,7 @@ A self-contained browser showcase with real-time WebGL Live2D avatar animation, 
 ![Luna Browser Demo Showcase](docs/screenshots/demo_showcase.png)
 
 ### 2. AI VTuber Studio Desktop App
-A lightweight desktop control center (`CustomTkinter`) allowing users to customize VTuber personality, switch AI models (Groq / Ollama), configure voice routing (Edge-TTS / ElevenLabs / Virtual Audio Cable), test speech in a built-in sandbox, and launch services with one click.
+A lightweight desktop control center (`CustomTkinter`) allowing users to customize VTuber personality, switch AI models (Groq / Ollama), configure voice routing (GPT-SoVITS / ElevenLabs / Virtual Audio Cable), test speech in a built-in sandbox, and launch services with one click.
 
 ![AI VTuber Studio Desktop App](docs/screenshots/studio_app.png)
 
@@ -65,7 +65,7 @@ flowchart LR
     end
 
     subgraph Outputs["Real-Time Outputs"]
-        VOICE["Neural TTS\n(Edge-TTS / ElevenLabs / GPT-SoVITS)"]
+        VOICE["Neural TTS\n(GPT-SoVITS / ElevenLabs)"]
         AVATAR["Live2D Avatar\n(WebGL / VTube Studio)"]
         MC_BOT["Mineflayer Bot\n(Node.js HTTP Bridge)"]
     end

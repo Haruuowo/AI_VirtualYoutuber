@@ -26,16 +26,6 @@ from voice import VoiceHandler
 ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
 
-EDGE_VOICES = [
-    "en-US-AnaNeural",
-    "en-US-AriaNeural",
-    "en-US-JennyNeural",
-    "en-US-MichelleNeural",
-    "en-US-AvaNeural",
-    "en-GB-SoniaNeural",
-    "ja-JP-NanamiNeural",
-]
-
 GROQ_MODELS = [
     "qwen/qwen3.8-27b",
     "llama-3.3-70b-versatile",
@@ -493,10 +483,10 @@ class VTuberStudioApp(ctk.CTk):
         )
 
         ctk.CTkLabel(card, text="TTS Engine:").grid(row=1, column=0, sticky="w", padx=16, pady=6)
-        self.tts_engine_var = ctk.StringVar(value=self.env.get("TTS_ENGINE", "edge"))
+        self.tts_engine_var = ctk.StringVar(value=self.env.get("TTS_ENGINE", "gptsovits"))
         self.tts_dropdown = ctk.CTkOptionMenu(
             card,
-            values=["edge", "elevenlabs", "gptsovits", "off"],
+            values=["gptsovits", "elevenlabs", "off"],
             variable=self.tts_engine_var,
             command=self._on_tts_engine_changed,
         )
@@ -507,18 +497,7 @@ class VTuberStudioApp(ctk.CTk):
         self.engine_card_container.grid(row=2, column=0, columnspan=2, sticky="ew", padx=0, pady=2)
         self.engine_card_container.grid_columnconfigure(1, weight=1)
 
-        # 1. Edge-TTS Card
-        self.edge_frame = ctk.CTkFrame(self.engine_card_container, fg_color="transparent")
-        self.edge_frame.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(self.edge_frame, text="Edge-TTS Voice (Free, Zero Setup):").grid(
-            row=0, column=0, sticky="w", padx=16, pady=4
-        )
-        self.edge_voice_var = ctk.StringVar(value=self.env.get("EDGE_VOICE", "en-US-AnaNeural"))
-        ctk.CTkComboBox(self.edge_frame, values=EDGE_VOICES, variable=self.edge_voice_var, width=320).grid(
-            row=0, column=1, sticky="w", padx=16, pady=4
-        )
-
-        # 2. ElevenLabs Card
+        # ElevenLabs Card
         self.eleven_frame = ctk.CTkFrame(self.engine_card_container, fg_color="transparent")
         self.eleven_frame.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(self.eleven_frame, text="ElevenLabs API Key:").grid(row=0, column=0, sticky="w", padx=16, pady=4)
@@ -567,15 +546,9 @@ class VTuberStudioApp(ctk.CTk):
         self.save_all(silent=True)
 
     def _update_tts_visibility(self, engine: str):
-        engine = (engine or "edge").lower()
-        if engine == "elevenlabs":
-            self.edge_frame.pack_forget()
+        if (engine or "").lower() == "elevenlabs":
             self.eleven_frame.pack(fill="x", expand=True)
-        elif engine == "edge":
-            self.eleven_frame.pack_forget()
-            self.edge_frame.pack(fill="x", expand=True)
         else:
-            self.edge_frame.pack_forget()
             self.eleven_frame.pack_forget()
 
     # ── Tab 4: Stream & Minecraft Connections ───────────────────────────────
@@ -771,7 +744,6 @@ class VTuberStudioApp(ctk.CTk):
             "GROQ_MODEL": self.groq_model_var.get().strip(),
             "OLLAMA_MODEL": self.ollama_model_var.get().strip(),
             "TTS_ENGINE": self.tts_engine_var.get(),
-            "EDGE_VOICE": self.edge_voice_var.get().strip(),
             "AUDIO_DEVICE": dev,
             "ELEVENLABS_API_KEY": self.eleven_key_var.get().strip(),
             "ELEVENLABS_VOICE_ID": self.eleven_id_var.get().strip(),
