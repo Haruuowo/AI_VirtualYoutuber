@@ -6,9 +6,9 @@ import time
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.world_state import WorldState
-from core.intent import is_luna_mentioned, parse_minecraft_intent
-from core.speech_queue import (
+from luna.core.world_state import WorldState
+from luna.core.intent import is_luna_mentioned, parse_minecraft_intent
+from luna.core.speech_queue import (
     SpeechQueue,
     P0_CRITICAL,
     P1_CHAT_DIRECT,
