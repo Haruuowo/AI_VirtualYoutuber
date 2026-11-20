@@ -208,8 +208,8 @@ class VRChatVision:
         self.last_steer: str = "wander_step"
         self.last_seen_ts: float = 0.0
         self._cloud_cooldown_until: float = 0.0
-        self._face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        self._body_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_upperbody.xml")
+        self._hog = cv2.HOGDescriptor()
+        self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
     @staticmethod
     def _describe_palette(arr: np.ndarray) -> str:
@@ -247,20 +247,17 @@ class VRChatVision:
             steer = "turn_left" if left_e > right_e else "turn_right"
             return {"scene": f"Close to a flat wall in a {palette} room; turning toward open space.", "steer": steer}
 
-        # 1. Check for character faces or upper bodies
-        faces = self._face_cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=4, minSize=(20, 20))
-        bodies = self._body_cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=3, minSize=(36, 36))
-        boxes = list(faces) + list(bodies)
-        if boxes:
-            # Pick largest detected character region
-            x, y, bw, bh = max(boxes, key=lambda rect: rect[2] * rect[3])
+        # 1. Check for character figures using OpenCV's built-in HOG People Detector (no external XML files needed)
+        rects, _ = self._hog.detectMultiScale(gray, winStride=(8, 8), padding=(16, 16), scale=1.08)
+        if len(rects) > 0:
+            x, y, bw, bh = max(rects, key=lambda rect: rect[2] * rect[3])
             cx = (x + bw / 2.0) / float(w)
             size_ratio = (bw * bh) / float(w * h)
             if cx < 0.36:
                 return {"scene": f"I see an avatar on the left side of my view in this {palette} space.", "steer": "turn_left"}
             if cx > 0.64:
                 return {"scene": f"I see an avatar on the right side of my view in this {palette} space.", "steer": "turn_right"}
-            if size_ratio > 0.16:
+            if size_ratio > 0.22:
                 return {"scene": f"An avatar is standing right in front of me up close in this {palette} room.", "steer": "look_around"}
             return {"scene": f"I see an avatar ahead in the center of this {palette} room.", "steer": "curious_approach"}
 
