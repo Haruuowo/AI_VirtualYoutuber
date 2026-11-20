@@ -243,8 +243,7 @@ class LunaInVRChat:
             print(f"[{tag}] could not open audio input: {e}")
 
     def start_all_ears(self):
-        """Starts listening to both your microphone AND optional VRChat world audio (other players)."""
-        import speech_recognition as sr
+        """Starts listening to your microphone (and optional VRCHAT_WORLD_LISTEN_DEVICE if explicitly configured)."""
         mic_dev = os.getenv("VRCHAT_LISTEN_DEVICE", "").strip()
         threading.Thread(
             target=self._start_stt_listener,
@@ -252,14 +251,9 @@ class LunaInVRChat:
             daemon=True,
         ).start()
 
-        # Check for world audio device (to hear other players in VRChat)
+        # Only open a 2nd listener if VRCHAT_WORLD_LISTEN_DEVICE is explicitly set in .env
+        # (Opening a disabled Stereo Mix endpoint causes PyAudio to call Pa_Terminate() and crash PortAudio)
         world_dev = os.getenv("VRCHAT_WORLD_LISTEN_DEVICE", "").strip()
-        if not world_dev:
-            # Auto-detect Windows 'Stereo Mix' if enabled on the machine
-            for name in sr.Microphone.list_microphone_names():
-                if "stereo mix" in name.lower() or "what u hear" in name.lower():
-                    world_dev = name
-                    break
         if world_dev:
             threading.Thread(
                 target=self._start_stt_listener,
@@ -278,10 +272,12 @@ class LunaInVRChat:
 
         self.speaking = True
         self.last_activity = time.time()
-        use_ptt = getattr(self.args, "ptt", False) or os.getenv("VRCHAT_PTT", "false").lower() in ("true", "1", "yes")
+        use_ptt = not getattr(self.args, "no_ptt", False) and os.getenv("VRCHAT_PTT", "true").lower() not in ("false", "0", "no")
         try:
             if use_ptt:
+                # Hold Push-To-Talk open in VRChat (Mic Mode: PushToTalk) while audio plays into CABLE Input
                 self.osc.client.send_message("/input/Voice", 1)
+                await asyncio.sleep(0.08)
             chat_task = asyncio.create_task(self.osc.say(reply))
             move_task = asyncio.create_task(self.osc.perform(chosen_action))
             if self.voice:
@@ -289,6 +285,7 @@ class LunaInVRChat:
             await asyncio.gather(chat_task, move_task, return_exceptions=True)
         finally:
             if use_ptt:
+                await asyncio.sleep(0.2)
                 self.osc.client.send_message("/input/Voice", 0)
             self.speaking = False
             self.last_activity = time.time()
@@ -477,7 +474,7 @@ class LunaInVRChat:
         self.osc.typing(True)
         greeting = await self.ai.async_generate_response(wake_prompt, "VRChat", "System")
         self.osc.typing(False)
-        await self._speak_and_move(greeting, action="look_around", tag="luna (awake)")
+        await self._speak_and_move(greeting, action="wander_step", tag="luna (awake)")
 
         while True:
             user, text, heard = await self.queue.get()
