@@ -13,15 +13,15 @@ load_dotenv()
 
 FFMPEG = shutil.which("ffmpeg") or r"C:\Users\Worldwide\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMP_MP3 = os.path.join(BASE_DIR, "temp_audio.mp3")
-TEMP_WAV = os.path.join(BASE_DIR, "temp_audio.wav")
+TEMP_MP3 = os.path.join(BASE_DIR, f"temp_audio_{os.getpid()}.mp3")
+TEMP_WAV = os.path.join(BASE_DIR, f"temp_audio_{os.getpid()}.wav")
 
 def mp3_to_wav(mp3_path, wav_path):
-    """Convert MP3 to WAV using ffmpeg subprocess directly."""
+    """Convert MP3 to 48kHz stereo WAV using ffmpeg so it matches VB-Cable & VRChat (48000 Hz)."""
     if os.path.exists(wav_path):
         os.remove(wav_path)
     subprocess.run(
-        [FFMPEG, "-y", "-i", mp3_path, wav_path],
+        [FFMPEG, "-y", "-i", mp3_path, "-ar", "48000", "-ac", "2", wav_path],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=True
