@@ -216,24 +216,27 @@ class LunaInVRChat:
                 return
         rec = sr.Recognizer()
         rec.dynamic_energy_threshold = True
+        rec.pause_threshold = 0.55
+        rec.non_speaking_duration = 0.35
         try:
             with sr.Microphone(device_index=index) as source:
-                rec.adjust_for_ambient_noise(source, duration=1)
+                rec.adjust_for_ambient_noise(source, duration=0.8)
                 print(f"[{tag}] listening for {speaker_label}...")
                 while True:
                     try:
-                        audio = rec.listen(source, phrase_time_limit=12)
+                        audio = rec.listen(source, phrase_time_limit=7)
                         if self.speaking:
                             continue
                         text = rec.recognize_google(audio)
                         if text:
-                            # Attribute to a nearby player in the room if heard from world audio
                             who = speaker_label
                             if tag == "world-ears":
                                 players = [p for p in self.world.snapshot()["players"] if p.lower() != HOST_NAME.lower()]
                                 if players:
                                     who = f"Nearby Player ({', '.join(players[:2])})"
                             print(f"\n[{tag} heard {who}] {text}")
+                            # Instant visual feedback in VRChat that she heard you
+                            self.osc.typing(True)
                             self.push(who, text, True)
                     except sr.UnknownValueError:
                         pass
@@ -297,14 +300,16 @@ class LunaInVRChat:
             self.world.set_behavior(mode_change, requested_action or mode_change)
             print(f"[autonomy] behavior mode -> {mode_change.upper()}")
 
-        # Always take a fresh look through her eyes before answering so she sees what's in front of her!
+        # Only call cloud vision when you ask a visual question ("what do you see?", "look at my avatar")
+        # or if she hasn't looked in 45s — saves 90% of vision tokens and keeps replies fast (<0.8s)!
         vision_steer = None
-        if self.vision and (is_visual_question(text) or time.time() - self.vision.last_seen_ts > 8.0):
+        if self.vision and (is_visual_question(text) or time.time() - self.vision.last_seen_ts > 45.0):
             obs = await self.vision.look(question=text if is_visual_question(text) else None)
             if obs["scene"]:
                 self.world.set_visual_scene(obs["scene"])
                 print(f"[eyes] {obs['scene']} (steer -> {obs['steer']})")
-            vision_steer = obs["steer"]
+            if is_visual_question(text):
+                vision_steer = obs["steer"]
 
         self.osc.typing(True)
         reply = await self.ai.async_generate_response(text, "VRChat", user)
@@ -312,47 +317,34 @@ class LunaInVRChat:
 
         await self._speak_and_move(reply, action=requested_action or vision_steer, tag="luna")
 
-    # ── Autonomous Body Loop (Vision-Guided Roaming & Wall Avoidance) ──────
+    # ── Autonomous Body Loop (Interactive Presence, Not Blind Pacing) ──────
 
     async def body_loop(self):
         """
-        Keeps Luna's avatar physically alive:
-          - Every roam tick uses fast local OpenCV (<2ms, 0 API tokens) to detect walls ahead.
-          - Every 3rd roam tick (or ~28s) uses cloud Vision LLM (~650 tokens) to spot avatars
-            and steer toward them without hitting Groq's 7,000 ITPM rate limit.
+        Keeps Luna's avatar feeling like a real player instead of a pacing NPC:
+          - While you are actively talking with her (last 45s), she STAYS WITH YOU
+            and only does subtle idle gestures (shift_weight, wave, look_around).
+          - Only when things have been quiet for 45+ seconds in ROAM mode does she
+            casually stroll around using OpenCV wall-avoidance (0 API tokens).
         """
-        step_count = 0
         while True:
-            await asyncio.sleep(random.uniform(7.5, 12.5))
+            await asyncio.sleep(random.uniform(9.0, 15.0))
             if not self.autonomy_enabled or self.speaking:
                 continue
 
-            step_count += 1
             mode = self.world.snapshot()["mode"]
-            if mode == "roam":
-                action = None
-                if self.vision and (step_count % 3 == 0 or time.time() - self.vision.last_seen_ts > 28.0):
-                    obs = await self.vision.look()
-                    if obs["scene"]:
-                        self.world.set_visual_scene(obs["scene"])
-                        print(f"[eyes] {obs['scene']} -> {obs['steer']}")
-                    action = obs["steer"]
-                else:
-                    frame = await asyncio.to_thread(capture_luna_vrchat_frame)
-                    if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
-                        action = random.choice(["turn_left", "turn_right"])
-                        print(f"[eyes] wall ahead (OpenCV) -> {action}")
-                    elif self.vision and self.vision.last_steer in ("curious_approach", "turn_left", "turn_right"):
-                        action = self.vision.last_steer
+            recently_talking = (time.time() - self.last_activity) < 45.0
 
-                if not action or action == "stay":
-                    action = random.choices(
-                        ["wander_step", "look_around", "wave", "cheer", "dance"],
-                        weights=[45, 30, 12, 8, 5],
-                        k=1,
-                    )[0]
+            if mode == "chill" or recently_talking:
+                # Stay engaged with the person talking to her instead of walking away!
+                action = random.choices(["shift_weight", "look_around", "wave"], weights=[55, 33, 12], k=1)[0]
             else:
-                action = random.choices(["look_around", "shift_weight", "wave"], weights=[45, 40, 15], k=1)[0]
+                frame = await asyncio.to_thread(capture_luna_vrchat_frame)
+                if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
+                    action = random.choice(["turn_left", "turn_right"])
+                    print(f"[eyes] wall ahead (OpenCV) -> {action}")
+                else:
+                    action = random.choices(["wander_step", "look_around", "shift_weight"], weights=[45, 35, 20], k=1)[0]
 
             self.world.record_action(action)
             try:
