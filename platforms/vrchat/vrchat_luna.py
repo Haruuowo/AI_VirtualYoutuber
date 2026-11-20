@@ -346,9 +346,13 @@ class LunaInVRChat:
                         action = self.vision.last_steer
 
                 if not action or action == "stay":
-                    action = random.choice(["wander_step", "look_around"])
+                    action = random.choices(
+                        ["wander_step", "look_around", "wave", "cheer", "dance"],
+                        weights=[45, 30, 12, 8, 5],
+                        k=1,
+                    )[0]
             else:
-                action = random.choice(["look_around", "shift_weight"])
+                action = random.choices(["look_around", "shift_weight", "wave"], weights=[45, 40, 15], k=1)[0]
 
             self.world.record_action(action)
             try:

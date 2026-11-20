@@ -121,25 +121,82 @@ class VRChatOSC:
         await asyncio.sleep(0.15)
         self.client.send_message("/input/Jump", 0)
 
+    # ── Avatar parameters, Hand Emotes & Facial Expressions ────────────────
+
     def set_param(self, name: str, value):
         """Drives an avatar parameter, e.g. VRCEmote or custom gesture toggle."""
         self.client.send_message(f"/avatar/parameters/{name}", value)
 
+    async def emote(self, emote_id: int, duration: float = 2.8, happy: bool = False, blush: float = 0.0):
+        """
+        Triggers a standard VRChat SDK3 hand/body emote (/avatar/parameters/VRCEmote 1..8)
+        plus optional facial parameters (Happy, Blush) supported by Luna's avatar, then resets.
+            1 = Wave (hand wave)      5 = Dance
+            2 = Clap (clapping hands) 6 = Backflip
+            3 = Point (point hand)    7 = SadKick
+            4 = Cheer (raise arms)    8 = Die / Dramatic faint
+        """
+        try:
+            if happy:
+                self.set_param("Happy", True)
+            if blush > 0:
+                self.set_param("Blush", float(min(1.0, blush)))
+            self.set_param("VRCEmote", int(emote_id))
+            await asyncio.sleep(max(0.5, duration))
+        finally:
+            self.set_param("VRCEmote", 0)
+            if happy:
+                self.set_param("Happy", False)
+            if blush > 0:
+                self.set_param("Blush", 0.0)
+
     # ── High-Level Expressive Actions & Autonomous Body Language ───────────
 
     async def perform(self, action: str):
-        """Executes a named physical behavior or gesture."""
+        """Executes a named physical behavior, locomotion step, or hand emote."""
         if action == "stop":
             self.stop_all()
+            self.set_param("VRCEmote", 0)
             return
 
-        if action == "jump":
+        if action == "wave":
+            await self.emote(1, duration=2.6, happy=True)
+
+        elif action == "clap":
+            await self.emote(2, duration=2.6, happy=True)
+
+        elif action == "point":
+            await self.emote(3, duration=2.4)
+
+        elif action == "cheer":
+            await self.emote(4, duration=2.8, happy=True)
+
+        elif action == "dance":
+            await self.emote(5, duration=5.5, happy=True)
+
+        elif action == "backflip":
+            await self.emote(6, duration=2.8, happy=True)
+
+        elif action == "sad_kick":
+            await self.emote(7, duration=2.6)
+
+        elif action == "play_dead":
+            await self.emote(8, duration=3.5)
+
+        elif action == "blush":
+            self.set_param("Happy", True)
+            self.set_param("Blush", 1.0)
+            await self.emote(7, duration=2.5, happy=True, blush=1.0)
+
+        elif action == "jump":
             await self.jump()
 
         elif action == "happy_hop":
+            self.set_param("Happy", True)
             await self.jump()
             await asyncio.sleep(0.45)
             await self.jump()
+            self.set_param("Happy", False)
 
         elif action == "look_around":
             # Curious glance left then right (or right then left)
@@ -191,22 +248,28 @@ class VRChatOSC:
 
     @staticmethod
     def pick_reaction_for_reply(reply_text: str) -> str:
-        """Chooses a natural body-language gesture that matches what Luna is saying."""
+        """Chooses a natural body-language gesture or hand emote that matches what Luna is saying."""
         low = reply_text.lower()
-        if any(w in low for w in ("haha", "lol", "yay", "hype", "lets go", "let's go", "awesome", "love")):
-            return random.choice(["happy_hop", "jump"])
+        if any(w in low for w in ("hi ", "hey", "hello", "welcome", "nice to meet", "sup", "wave", "bye", "see ya")):
+            return random.choice(["wave", "wave", "curious_approach"])
+        if any(w in low for w in ("haha", "lol", "yay", "hype", "lets go", "let's go", "awesome", "love", "congrats", "nice")):
+            return random.choice(["cheer", "clap", "happy_hop"])
+        if any(w in low for w in ("dance", "vibe", "music", "groove", "party")):
+            return "dance"
+        if any(w in low for w in ("you", "that", "there", "look at", "check out", "point")):
+            return random.choice(["point", "look_around"])
+        if any(w in low for w in ("cute", "blush", "flatter", "sweet", "aw", "shy")):
+            return "blush"
         if any(w in low for w in ("where", "who", "look", "see", "place", "world", "room", "around")):
             return "look_around"
-        if any(w in low for w in ("hi ", "hey", "hello", "welcome", "nice to meet", "sup")):
-            return random.choice(["curious_approach", "happy_hop"])
         if any(w in low for w in ("woah", "wait", "chill", "hold up", "scary", "creepy")):
             return "step_back"
-        return random.choice(["shift_weight", "look_around", "wander_step"])
+        return random.choice(["wave", "point", "clap", "shift_weight", "look_around"])
 
 
 def detect_movement_request(text: str) -> tuple[str | None, str | None]:
     """
-    Lightweight check if someone asked Luna to move or change her autonomy mode.
+    Lightweight check if someone asked Luna to move, emote with her hands, or change autonomy mode.
     Returns (mode_change, action):
         mode_change: 'roam' | 'chill' | None
         action:      action name for VRChatOSC.perform() | None
@@ -219,8 +282,28 @@ def detect_movement_request(text: str) -> tuple[str | None, str | None]:
     if re.search(r"\b(roam|wander|explore|walk around|move around|do what you want|be free)\b", low):
         return ("roam", "wander_step")
 
-    # Direct physical requests
-    if re.search(r"\b(come here|walk forward|step forward|closer|follow me)\b", low):
+    # Hand emotes & full-body animations (VRCEmote 1..8 + facial expressions)
+    if re.search(r"\b(wave|say hi|raise your hand|use your hand)\b", low):
+        return (None, "wave")
+    if re.search(r"\b(clap|applaud)\b", low):
+        return (None, "clap")
+    if re.search(r"\b(point|point at)\b", low):
+        return (None, "point")
+    if re.search(r"\b(cheer|hands up|arms up|celebrate)\b", low):
+        return (None, "cheer")
+    if re.search(r"\b(dance|boogie|bust a move)\b", low):
+        return (None, "dance")
+    if re.search(r"\b(backflip|do a flip|flip)\b", low):
+        return (None, "backflip")
+    if re.search(r"\b(blush|you'?re cute|so cute|pretty)\b", low):
+        return (None, "blush")
+    if re.search(r"\b(play dead|faint|die|fall over)\b", low):
+        return (None, "play_dead")
+    if re.search(r"\b(sad|pout|shy)\b", low):
+        return (None, "sad_kick")
+
+    # Direct physical locomotion requests
+    if re.search(r"\b(come here|walk forward|step forward|closer|follow me|come to me)\b", low):
         return (None, "walk_forward")
     if re.search(r"\b(back up|step back|move back|go back)\b", low):
         return (None, "walk_back")
