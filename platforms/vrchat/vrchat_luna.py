@@ -315,23 +315,38 @@ class LunaInVRChat:
     # ── Autonomous Body Loop (Vision-Guided Roaming & Wall Avoidance) ──────
 
     async def body_loop(self):
-        """Keeps Luna's avatar physically alive—using her eyes on every step to steer toward people and avoid walls."""
+        """
+        Keeps Luna's avatar physically alive:
+          - Every roam tick uses fast local OpenCV (<2ms, 0 API tokens) to detect walls ahead.
+          - Every 3rd roam tick (or ~28s) uses cloud Vision LLM (~650 tokens) to spot avatars
+            and steer toward them without hitting Groq's 7,000 ITPM rate limit.
+        """
+        step_count = 0
         while True:
-            await asyncio.sleep(random.uniform(7.0, 12.0))
+            await asyncio.sleep(random.uniform(7.5, 12.5))
             if not self.autonomy_enabled or self.speaking:
                 continue
 
+            step_count += 1
             mode = self.world.snapshot()["mode"]
             if mode == "roam":
                 action = None
-                if self.vision:
+                if self.vision and (step_count % 3 == 0 or time.time() - self.vision.last_seen_ts > 28.0):
                     obs = await self.vision.look()
                     if obs["scene"]:
                         self.world.set_visual_scene(obs["scene"])
                         print(f"[eyes] {obs['scene']} -> {obs['steer']}")
                     action = obs["steer"]
+                else:
+                    frame = await asyncio.to_thread(capture_luna_vrchat_frame)
+                    if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
+                        action = random.choice(["turn_left", "turn_right"])
+                        print(f"[eyes] wall ahead (OpenCV) -> {action}")
+                    elif self.vision and self.vision.last_steer in ("curious_approach", "turn_left", "turn_right"):
+                        action = self.vision.last_steer
+
                 if not action or action == "stay":
-                    action = "look_around"
+                    action = random.choice(["wander_step", "look_around"])
             else:
                 action = random.choice(["look_around", "shift_weight"])
 

@@ -101,7 +101,7 @@ class AIHandler:
             try:
                 kwargs = dict(
                     model=self.model,
-                    max_tokens=max_tokens,
+                    max_tokens=max(max_tokens, 90),
                     temperature=temperature,
                     messages=messages,
                 )
@@ -112,6 +112,17 @@ class AIHandler:
             except Exception as e:
                 err_str = str(e)
                 if '429' in err_str or 'rate_limit' in err_str:
+                    # First try Groq's separate model pool (openai/gpt-oss-120b) before local Ollama
+                    try:
+                        resp = self.client.chat.completions.create(
+                            model="openai/gpt-oss-120b",
+                            max_tokens=max(max_tokens, 90),
+                            temperature=temperature,
+                            messages=messages,
+                        )
+                        return resp.choices[0].message.content
+                    except Exception:
+                        pass
                     print(f"[AI Fallback] Groq rate limit hit. Seamlessly falling back to local Ollama...")
                     try:
                         import ollama

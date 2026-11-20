@@ -19,6 +19,13 @@ from PIL import Image, ImageGrab
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    try:
+        user32.SetProcessDPIAware()
+    except Exception:
+        pass
 PW_RENDERFULLCONTENT = 0x00000002
 BI_RGB = 0
 
@@ -143,34 +150,33 @@ def _capture_hwnd_printwindow(hwnd: int, width: int, height: int) -> Image.Image
         user32.ReleaseDC(hwnd, hwnd_dc)
 
 
-def capture_luna_vrchat_frame(max_w: int = 640, max_h: int = 360) -> Image.Image | None:
+def capture_luna_vrchat_frame(max_w: int = 384, max_h: int = 216) -> Image.Image | None:
     """
     Captures Luna's VRChat window (prefers the smaller VRChat window when two are open),
-    saves a debug copy to `platforms/vrchat/last_eye_view.jpg`, and returns the PIL Image.
+    saves a debug copy to `platforms/vrchat/last_eye_view.jpg`, and returns a 384x216 PIL Image
+    (~650 vision tokens instead of 2,263 so it never hits Groq's 7,000 ITPM rate limit!).
     """
     wins = find_vrchat_windows()
+    if not wins:
+        # Do NOT fall back to full-desktop grab (which captures VS Code / black terminal!)
+        return None
+
+    hwnd, (l, t, r, b), _ = wins[0]
+    w, h = r - l, b - t
     img = None
-    if wins:
-        hwnd, (l, t, r, b), _ = wins[0]
-        w, h = r - l, b - t
-        try:
-            img = _capture_hwnd_printwindow(hwnd, w, h)
-        except Exception:
-            img = None
-        if img is None:
-            try:
-                img = ImageGrab.grab(bbox=(l, t, r, b))
-            except Exception:
-                img = None
+    try:
+        img = _capture_hwnd_printwindow(hwnd, w, h)
+    except Exception:
+        img = None
     if img is None:
         try:
-            img = ImageGrab.grab()
+            img = ImageGrab.grab(bbox=(l, t, r, b))
         except Exception:
             return None
 
     resized = img.resize((max_w, max_h), Image.Resampling.BILINEAR)
     try:
-        resized.save(DEBUG_FRAME_PATH, format="JPEG", quality=80)
+        resized.save(DEBUG_FRAME_PATH, format="JPEG", quality=78)
     except Exception:
         pass
     return resized
@@ -235,21 +241,30 @@ class VRChatVision:
             )
 
         # IMPORTANT: reasoning_effort='none' prevents qwen3.8-27b from exhausting max_tokens inside <think> tags!
-        resp = client.chat.completions.create(
-            model=self.model,
-            max_tokens=160,
-            temperature=0.25,
-            reasoning_effort="none",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+        resp = None
+        for attempt in range(2):
+            try:
+                resp = client.chat.completions.create(
+                    model=self.model,
+                    max_tokens=160,
+                    temperature=0.25,
+                    reasoning_effort="none",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                            ],
+                        }
                     ],
-                }
-            ],
-        )
+                )
+                break
+            except Exception as e:
+                if attempt == 0 and ("429" in str(e) or "rate_limit" in str(e)):
+                    time.sleep(1.3)
+                    continue
+                raise
         raw = (resp.choices[0].message.content or "").strip()
         # Strip any <think>...</think> block if present
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
