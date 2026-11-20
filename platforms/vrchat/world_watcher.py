@@ -21,6 +21,46 @@ from pathlib import Path
 RE_ROOM = re.compile(r"\[Behaviour\] (?:Joining or Creating Room|Entering Room): (.+)")
 RE_JOIN = re.compile(r"\[Behaviour\] OnPlayerJoined ([^\r\n(]+)")
 RE_LEFT = re.compile(r"\[Behaviour\] OnPlayerLeft ([^\r\n(]+)")
+RE_LOCAL = re.compile(r'Initialized PlayerAPI "([^"]+)" is local')
+
+
+def log_owner(path: Path) -> str | None:
+    """Returns the account name that wrote this VRChat log (the 'local' player)."""
+    owner = None
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                m = RE_LOCAL.search(line)
+                if m:
+                    owner = m.group(1).strip()
+    except OSError:
+        pass
+    return owner
+
+
+def pick_luna_log(folder: Path) -> Path | None:
+    """
+    With two VRChat windows open, both write logs to the same folder.
+    Pick Luna's log:  VRCHAT_LUNA_USER match  >  not VRCHAT_MAIN_USER  >  newest.
+    """
+    if not folder.exists():
+        return None
+    logs = sorted(folder.glob("output_log_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    recent = [p for p in logs if time.time() - p.stat().st_mtime < 6 * 3600][:4] or logs[:1]
+    if not recent:
+        return None
+    luna_user = os.getenv("VRCHAT_LUNA_USER", "").strip().lower()
+    main_user = os.getenv("VRCHAT_MAIN_USER", "").strip().lower()
+    if not luna_user and not main_user:
+        return recent[0]
+    owners = [(p, (log_owner(p) or "").lower()) for p in recent]
+    for p, owner in owners:
+        if luna_user and owner == luna_user:
+            return p
+    for p, owner in owners:
+        if main_user and owner and owner != main_user:
+            return p
+    return recent[0]
 
 
 def default_vrc_log_dir() -> Path:
@@ -117,17 +157,17 @@ async def watch_vrchat_logs(state: VRChatWorldState, on_event, log_dir: Path | N
     folder = log_dir or default_vrc_log_dir()
     current_path: Path | None = None
     file_obj = None
-
-    def latest_log() -> Path | None:
-        if not folder.exists():
-            return None
-        logs = sorted(folder.glob("output_log_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
-        return logs[0] if logs else None
+    last_pick = 0.0
 
     try:
         while True:
-            newest = latest_log()
+            # Re-check which log is Luna's every 10s (a new window/login creates a new log).
+            newest = current_path
+            if time.time() - last_pick > 10 or current_path is None:
+                newest = await asyncio.to_thread(pick_luna_log, folder)
+                last_pick = time.time()
             if newest and newest != current_path:
+                print(f"[vrchat] reading log: {newest.name} (account: {log_owner(newest) or 'not logged in yet'})")
                 if file_obj:
                     try:
                         file_obj.close()

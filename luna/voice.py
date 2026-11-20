@@ -3,6 +3,7 @@ import asyncio
 import subprocess
 import sounddevice as sd
 import soundfile as sf
+import numpy as np
 import io
 import time
 import shutil
@@ -27,9 +28,10 @@ def mp3_to_wav(mp3_path, wav_path):
     )
 
 class VoiceHandler:
-    def __init__(self):
+    def __init__(self, mirror_device: str | None = None):
         self.tts_enabled = os.getenv('TTS_ENABLED', 'true').lower() in ('true', '1', 'yes')
         self.audio_device = os.getenv('AUDIO_DEVICE', '').strip()
+        self.mirror_device = (mirror_device or os.getenv('MIRROR_AUDIO_DEVICE', '')).strip()
         self.elevenlabs_key = os.getenv('ELEVENLABS_API_KEY', '').strip()
         self.voice_id = os.getenv('ELEVENLABS_VOICE_ID', '').strip()
         self.tts_engine = os.getenv('TTS_ENGINE', 'edge').lower().strip()
@@ -40,19 +42,55 @@ class VoiceHandler:
         self.voice_rate = os.getenv('VOICE_RATE', '+0%').strip()
         self.ref_audio_path = os.getenv('REF_AUDIO_PATH', '').strip()
         self.device_id = None
+        self.mirror_device_id = None
         self.is_speaking = False
+
+    @staticmethod
+    def _find_output_device(query: str) -> tuple[int | None, str | None]:
+        if not query:
+            return None, None
+        for i, device in enumerate(sd.query_devices()):
+            if query.lower() in device['name'].lower() and device['max_output_channels'] > 0:
+                return i, device['name']
+        return None, None
 
     def set_audio_device(self):
         if not self.tts_enabled:
             return
         if self.audio_device:
-            devices = sd.query_devices()
-            for i, device in enumerate(devices):
-                if self.audio_device.lower() in device['name'].lower() and device['max_output_channels'] > 0:
-                    self.device_id = i
-                    print(f"Audio device set: {device['name']} (ID: {i})")
-                    return
-            print(f"Audio device not found: {self.audio_device}, using default")
+            idx, name = self._find_output_device(self.audio_device)
+            if idx is not None:
+                self.device_id = idx
+                print(f"Audio device set: {name} (ID: {idx})")
+            else:
+                print(f"Audio device not found: {self.audio_device}, using default")
+        if self.mirror_device:
+            idx, name = self._find_output_device(self.mirror_device)
+            if idx is not None and idx != self.device_id:
+                self.mirror_device_id = idx
+                print(f"Mirror audio device set: {name} (ID: {idx})")
+
+    def _play_samples(self, data, samplerate: int):
+        """Play audio samples on primary device and optional mirror device (e.g. Headphones + CABLE Input)."""
+        if self.mirror_device_id is not None:
+            try:
+                arr = np.asarray(data, dtype='float32')
+                if arr.ndim == 1:
+                    arr = arr.reshape(-1, 1)
+                channels = arr.shape[1]
+                chunk_size = 4096
+                with sd.OutputStream(samplerate=samplerate, device=self.device_id, channels=channels, dtype='float32') as s1, \
+                     sd.OutputStream(samplerate=samplerate, device=self.mirror_device_id, channels=channels, dtype='float32') as s2:
+                    for start in range(0, len(arr), chunk_size):
+                        block = arr[start:start + chunk_size]
+                        s1.write(block)
+                        s2.write(block)
+                return
+            except Exception as e:
+                print(f"[Audio Mirror Warning] Falling back to primary device: {e}")
+
+        sd.play(data, samplerate, device=self.device_id)
+        sd.wait()
 
     async def generate_and_play_audio(self, text):
         if not self.tts_enabled:
@@ -74,27 +112,28 @@ class VoiceHandler:
         except Exception as e:
             print(f"Audio error: {e}")
         finally:
-            time.sleep(1.5)
+            time.sleep(0.5)
             self.is_speaking = False
 
     async def _play_gptsovits(self, text):
         try:
             import httpx
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    "http://localhost:9880",
-                    params={
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    "http://127.0.0.1:9880",
+                    json={
+                        "refer_wav_path": self.ref_audio_path,
+                        "prompt_text": "Okay, let's see what chat is saying today.",
+                        "prompt_language": "en",
                         "text": text,
-                        "text_lang": "en",
-                        "ref_audio_path": self.ref_audio_path,
-                        "prompt_lang": "en",
-                        "media_type": "wav"
-                    },
-                    timeout=30
+                        "text_language": "en"
+                    }
                 )
+            if response.status_code != 200:
+                print(f"GPT-SoVITS returned status {response.status_code}")
+                return False
             data, samplerate = sf.read(io.BytesIO(response.content))
-            sd.play(data, samplerate, device=self.device_id)
-            sd.wait()
+            self._play_samples(data, samplerate)
             return True
         except Exception as e:
             print(f"GPT-SoVITS error: {e}")
@@ -117,8 +156,7 @@ class VoiceHandler:
             await asyncio.to_thread(mp3_to_wav, TEMP_MP3, TEMP_WAV)
 
             data, samplerate = sf.read(TEMP_WAV)
-            sd.play(data, samplerate, device=self.device_id)
-            sd.wait()
+            self._play_samples(data, samplerate)
             return True
         except Exception as e:
             print(f"ElevenLabs error: {e}")
@@ -137,8 +175,7 @@ class VoiceHandler:
             await asyncio.to_thread(mp3_to_wav, TEMP_MP3, TEMP_WAV)
 
             data, samplerate = sf.read(TEMP_WAV)
-            sd.play(data, samplerate, device=self.device_id)
-            sd.wait()
+            self._play_samples(data, samplerate)
         except Exception as e:
             print(f"edge-tts error: {e}")
         finally:

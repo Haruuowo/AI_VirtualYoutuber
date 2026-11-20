@@ -62,6 +62,9 @@ AUTONOMOUS_THOUGHT_PROMPTS = [
 
 def parse_args():
     p = argparse.ArgumentParser(description="Luna AI in VRChat — Autonomous Companion")
+    p.add_argument("--host", type=str, default=None, help="VRChat OSC target IP (default: 127.0.0.1 or VRCHAT_OSC_HOST in .env, e.g. 192.168.1.3 for phone)")
+    p.add_argument("--port", type=int, default=None, help="VRChat OSC target port (default: 9000)")
+    p.add_argument("--ptt", action="store_true", help="Hold VRChat OSC /input/Voice=1 while speaking (for Push-To-Talk)")
     p.add_argument("--listen", action="store_true", help="Listen on a microphone with speech-to-text")
     p.add_argument("--wake-word", action="store_true", help="Only answer heard speech that mentions 'Luna'")
     p.add_argument("--no-voice", action="store_true", help="Chatbox only, no TTS audio")
@@ -90,7 +93,7 @@ def list_devices():
 class LunaInVRChat:
     def __init__(self, args):
         self.args = args
-        self.osc = VRChatOSC()
+        self.osc = VRChatOSC(host=getattr(args, "host", None), port=getattr(args, "port", None))
         self.world = VRChatWorldState(self_name="Luna")
         if getattr(args, "chill", False):
             self.world.set_behavior("chill", "hanging out in place")
@@ -104,8 +107,14 @@ class LunaInVRChat:
         self.voice = None
         if not getattr(args, "no_voice", False):
             from luna.voice import VoiceHandler
-            self.voice = VoiceHandler()
-            self.voice.audio_device = os.getenv("VRCHAT_AUDIO_DEVICE", "CABLE Input").strip()
+            vrc_cable = os.getenv("VRCHAT_AUDIO_DEVICE", "CABLE Input").strip()
+            if os.getenv("VRCHAT_MONITOR", "true").lower() in ("false", "0", "no"):
+                # One-PC mode: you hear Luna through YOUR VRChat window, so only feed her mic.
+                self.voice = VoiceHandler()
+                self.voice.audio_device = vrc_cable
+            else:
+                # Also play her voice in your headphones.
+                self.voice = VoiceHandler(mirror_device=vrc_cable)
             self.voice.set_audio_device()
 
     # ── Inputs ─────────────────────────────────────────────────────────────
@@ -116,7 +125,10 @@ class LunaInVRChat:
 
     async def console_loop(self):
         while True:
-            text = (await asyncio.to_thread(input, "you > ")).strip()
+            try:
+                text = (await asyncio.to_thread(input, "you > ")).strip()
+            except EOFError:
+                return
             if text.lower() in ("quit", "exit"):
                 self.osc.stop_all()
                 self.osc.clear()
@@ -165,13 +177,18 @@ class LunaInVRChat:
 
         self.speaking = True
         self.last_activity = time.time()
+        use_ptt = getattr(self.args, "ptt", False) or os.getenv("VRCHAT_PTT", "").lower() == "true"
         try:
+            if use_ptt:
+                self.osc.client.send_message("/input/Voice", 1)
             chat_task = asyncio.create_task(self.osc.say(reply))
             move_task = asyncio.create_task(self.osc.perform(chosen_action))
             if self.voice:
                 await asyncio.to_thread(asyncio.run, self.voice.generate_and_play_audio(reply))
             await asyncio.gather(chat_task, move_task, return_exceptions=True)
         finally:
+            if use_ptt:
+                self.osc.client.send_message("/input/Voice", 0)
             self.speaking = False
             self.last_activity = time.time()
 
@@ -277,26 +294,39 @@ class LunaInVRChat:
     async def run(self):
         self.loop = asyncio.get_running_loop()
         snap = self.world.snapshot()
+        asyncio.create_task(watch_vrchat_logs(self.world, self.on_vrc_event))
+        await asyncio.sleep(0.5)  # allow initial VRChat log pre-scan to populate world & players
+        snap = self.world.snapshot()
+
         print("=" * 64)
         print("        LUNA AI VTUBER - AUTONOMOUS VRCHAT COMPANION")
         print("=" * 64)
         print(f"  Brain     : {self.ai.provider} / {self.ai.model}")
+        print(f"  VRChat    : world='{snap['world']}' | players={snap['players'] or ['(solo)']}")
         print(f"  OSC       : {self.osc.host}:{self.osc.port}  (chatbox + /input/* locomotion)")
         print(f"  Autonomy  : {'ON (' + snap['mode'].upper() + ' mode)' if self.autonomy_enabled else 'OFF (manual)'}")
-        print(f"  Voice Out : {'OFF (chatbox only)' if not self.voice else self.voice.audio_device or 'default output'}")
+        print(f"  Voice Out : {'OFF (chatbox only)' if not self.voice else ' + '.join(x for x in (self.voice.audio_device, self.voice.mirror_device) if x)}")
         print(f"  Mic Listen: {'ON' if self.args.listen else 'OFF (use --listen)'}")
         print("=" * 64)
         print("Tip: Tell her 'stay here' to chill in place, or 'roam around' to explore.")
-        print("Type below to talk to Luna, or type 'quit' to exit.\n")
+        print("Type below (or speak into your mic) to talk to Luna. Type 'quit' to exit.\n")
 
-        self.osc.send_chatbox("Luna is online!")
         if self.args.listen:
             threading.Thread(target=self.mic_thread, daemon=True).start()
         asyncio.create_task(self.console_loop())
-        asyncio.create_task(watch_vrchat_logs(self.world, self.on_vrc_event))
         if self.autonomy_enabled:
             asyncio.create_task(self.body_loop())
             asyncio.create_task(self.mind_loop())
+
+        # Immediate autonomous wake-up greeting in VRChat!
+        wake_prompt = (
+            f"[System: You just woke up inside VRChat in the world '{snap['world']}'. "
+            f"Say a quick, energetic hello to Kai and look around the room.]"
+        )
+        self.osc.typing(True)
+        greeting = await self.ai.async_generate_response(wake_prompt, "VRChat", "System")
+        self.osc.typing(False)
+        await self._speak_and_move(greeting, action="wander_step", tag="luna (awake)")
 
         while True:
             user, text, heard = await self.queue.get()

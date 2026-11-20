@@ -67,26 +67,37 @@ class VRChatOSC:
     # ── Low-Level Locomotion (/input/*) ────────────────────────────────────
 
     def stop_all(self):
-        """Immediately zeroes all movement axes so the avatar never gets stuck walking."""
+        """Immediately zeroes all movement axes and buttons so the avatar never gets stuck walking."""
         for addr in ("/input/Vertical", "/input/Horizontal", "/input/LookHorizontal"):
             self.client.send_message(addr, 0.0)
-        for addr in ("/input/Jump", "/input/Run"):
+        for addr in (
+            "/input/MoveForward", "/input/MoveBackward",
+            "/input/MoveLeft", "/input/MoveRight",
+            "/input/LookLeft", "/input/LookRight",
+            "/input/Jump", "/input/Run",
+        ):
             self.client.send_message(addr, 0)
 
     async def move(self, vertical: float = 0.0, horizontal: float = 0.0, duration: float = 1.0, run: bool = False):
-        """Walks/strafes for `duration` seconds and cleanly stops."""
+        """Walks/strafes for `duration` seconds using both Axis and Button OSC endpoints, then cleanly stops."""
         async with self._move_lock:
             try:
                 if run:
                     self.client.send_message("/input/Run", 1)
                 if vertical:
-                    self.client.send_message("/input/Vertical", float(max(-1.0, min(1.0, vertical))))
+                    v = float(max(-1.0, min(1.0, vertical)))
+                    self.client.send_message("/input/Vertical", v)
+                    self.client.send_message("/input/MoveForward" if v > 0 else "/input/MoveBackward", 1)
                 if horizontal:
-                    self.client.send_message("/input/Horizontal", float(max(-1.0, min(1.0, horizontal))))
+                    h = float(max(-1.0, min(1.0, horizontal)))
+                    self.client.send_message("/input/Horizontal", h)
+                    self.client.send_message("/input/MoveRight" if h > 0 else "/input/MoveLeft", 1)
                 await asyncio.sleep(max(0.05, duration))
             finally:
                 self.client.send_message("/input/Vertical", 0.0)
                 self.client.send_message("/input/Horizontal", 0.0)
+                for btn in ("/input/MoveForward", "/input/MoveBackward", "/input/MoveLeft", "/input/MoveRight"):
+                    self.client.send_message(btn, 0)
                 if run:
                     self.client.send_message("/input/Run", 0)
 
@@ -94,10 +105,15 @@ class VRChatOSC:
         """Turns left (negative speed) or right (positive speed) for `duration` seconds."""
         async with self._move_lock:
             try:
-                self.client.send_message("/input/LookHorizontal", float(max(-1.0, min(1.0, speed))))
+                s = float(max(-1.0, min(1.0, speed)))
+                self.client.send_message("/input/LookHorizontal", s)
+                if s != 0:
+                    self.client.send_message("/input/LookRight" if s > 0 else "/input/LookLeft", 1)
                 await asyncio.sleep(max(0.05, duration))
             finally:
                 self.client.send_message("/input/LookHorizontal", 0.0)
+                self.client.send_message("/input/LookLeft", 0)
+                self.client.send_message("/input/LookRight", 0)
 
     async def jump(self):
         """Taps the jump input."""
