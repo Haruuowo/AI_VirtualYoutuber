@@ -1,35 +1,23 @@
 """
-Luna in VRChat — Autonomous Companion with Her Own Account, Mind & Body.
+Luna in VRChat — Autonomous Companion with Eyes (AI Vision), Ears (Mic + World Audio),
+Mind (Spontaneous Thoughts), and Body (OSC Locomotion).
 
-Uses Luna's shared brain (`luna.brain.AIHandler`) and gives her a self-directed
-presence inside VRChat:
+Capabilities:
+  1. AI Vision (`platforms/vrchat/vision.py`):
+     * Captures Luna's VRChat window in real time (even when behind your main window).
+     * Uses multimodal `qwen/qwen3.8-27b` + OpenCV wall detection so she can
+       describe avatars, outfits, mirrors, and room details, avoid walking into
+       walls, and visually turn/walk toward people she sees on screen!
 
-  1. Autonomous Mind (free-will speech):
-     * Tails VRChat's local output log in real time so she knows what world she
-       is in and which players are in the room with her.
-     * Reacts on her own when entering a new world or when players join.
-     * Periodically initiates conversation, comments on her surroundings, or
-       asks Kai / nearby players questions without waiting for commands.
+  2. Dual Ears (Your Mic + Other VRChat Players):
+     * Listens to your microphone (`VRCHAT_LISTEN_DEVICE` / default mic).
+     * Also listens to nearby players talking in VRChat if `VRCHAT_WORLD_LISTEN_DEVICE`
+       (e.g. Stereo Mix / Voicemeeter / Secondary Virtual Cable) is set or auto-detected.
 
-  2. Autonomous Body (OSC locomotion & gestures):
-     * Continuously performs natural idle body language (looking around,
-       shifting weight) and casual room roaming (`/input/Vertical`,
-       `/input/LookHorizontal`, `/input/Jump`) so she never stands frozen.
-     * Automatically pairs every spoken reply with a matching physical gesture.
-     * Understands natural requests in conversation ("stay here", "go explore",
-       "come closer", "spin around", "jump") without needing rigid commands.
-
-  3. Voice & Lip-Sync:
-     * Displays speech in VRChat's floating `/chatbox/input` bubble.
-     * Routes neural TTS into `CABLE Input` -> VRChat Microphone `CABLE Output`
-       for automatic viseme mouth movement.
-
-Run:
-    start_vrchat.bat
-    python platforms/vrchat/vrchat_luna.py                 # autonomous mind + body + voice
-    python platforms/vrchat/vrchat_luna.py --listen        # also hear your mic via STT
-    python platforms/vrchat/vrchat_luna.py --chill         # start in stay-put mode (no roaming)
-    python platforms/vrchat/vrchat_luna.py --no-autonomy   # manual / response-only mode
+  3. Autonomous Mind & Body:
+     * Tails VRChat's local log file for world changes and player joins/leaves.
+     * Roams, glances around, hops, approaches people she sees, and initiates
+       conversations on her own.
 """
 import argparse
 import asyncio
@@ -48,26 +36,28 @@ import luna  # noqa: E402,F401  (loads project .env)
 from luna.brain import AIHandler  # noqa: E402
 from luna.core.intent import is_luna_mentioned  # noqa: E402
 from platforms.vrchat.osc import VRChatOSC, detect_movement_request  # noqa: E402
+from platforms.vrchat.vision import VRChatVision, capture_luna_vrchat_frame, is_facing_blank_wall, is_visual_question  # noqa: E402
 from platforms.vrchat.world_watcher import VRChatWorldState, watch_vrchat_logs  # noqa: E402
 
 HOST_NAME = os.getenv("VRCHAT_HOST_NAME", "Kai")
 
 AUTONOMOUS_THOUGHT_PROMPTS = [
-    "You are wandering around in VRChat right now. Make a spontaneous, casual observation about the world you're in or what you're doing.",
-    "Start a casual conversation with Kai or the people nearby in the VRChat room. Ask a fun question or share a quick random thought.",
-    "You just glanced around the VRChat room. Make a witty, lighthearted comment about the vibe here or hanging out in VR.",
-    "Share a spontaneous thought about games, tech, music, or virtual worlds while hanging out with Kai in VRChat.",
+    "Look at what your eyes currently see in front of you in VRChat and make a natural, witty comment about it.",
+    "Start a casual conversation with Kai or the people nearby in the VRChat room based on where you are and what you see.",
+    "You just glanced around the VRChat room. Comment on an avatar, detail, or the vibe you see in front of you.",
+    "Share a spontaneous thought or ask Kai / nearby players a fun question while hanging out in VRChat.",
 ]
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Luna AI in VRChat — Autonomous Companion")
-    p.add_argument("--host", type=str, default=None, help="VRChat OSC target IP (default: 127.0.0.1 or VRCHAT_OSC_HOST in .env, e.g. 192.168.1.3 for phone)")
-    p.add_argument("--port", type=int, default=None, help="VRChat OSC target port (default: 9000)")
-    p.add_argument("--ptt", action="store_true", help="Hold VRChat OSC /input/Voice=1 while speaking (for Push-To-Talk)")
-    p.add_argument("--listen", action="store_true", help="Listen on a microphone with speech-to-text")
+    p = argparse.ArgumentParser(description="Luna AI in VRChat — Autonomous Companion with Vision & Voice")
+    p.add_argument("--host", type=str, default=None, help="VRChat OSC target IP (default: 127.0.0.1)")
+    p.add_argument("--port", type=int, default=None, help="VRChat OSC target port (default: 9002 or VRCHAT_OSC_PORT)")
+    p.add_argument("--ptt", action="store_true", help="Hold VRChat OSC /input/Voice=1 while speaking")
+    p.add_argument("--listen", action="store_true", help="Listen on microphone (and optional world audio) via STT")
     p.add_argument("--wake-word", action="store_true", help="Only answer heard speech that mentions 'Luna'")
     p.add_argument("--no-voice", action="store_true", help="Chatbox only, no TTS audio")
+    p.add_argument("--no-vision", action="store_true", help="Disable AI vision screen capture")
     p.add_argument("--no-autonomy", action="store_true", help="Disable autonomous roaming and spontaneous thoughts")
     p.add_argument("--chill", action="store_true", help="Start in stay-put mode (subtle idle movement, no roaming)")
     p.add_argument("--think-every", type=int, default=38, help="Average seconds between autonomous thoughts (default: 38)")
@@ -83,7 +73,7 @@ def list_devices():
             print("   ", d["name"])
     try:
         import speech_recognition as sr
-        print("\nINPUT devices (use for VRCHAT_LISTEN_DEVICE):")
+        print("\nINPUT devices (use for VRCHAT_LISTEN_DEVICE or VRCHAT_WORLD_LISTEN_DEVICE):")
         for name in sr.Microphone.list_microphone_names():
             print("   ", name)
     except Exception as e:
@@ -94,10 +84,11 @@ class LunaInVRChat:
     def __init__(self, args):
         self.args = args
         self.osc = VRChatOSC(host=getattr(args, "host", None), port=getattr(args, "port", None))
-        self.world = VRChatWorldState(self_name="Luna")
+        self.world = VRChatWorldState(self_name=os.getenv("VRCHAT_LUNA_USER", "Luna") or "Luna")
         if getattr(args, "chill", False):
             self.world.set_behavior("chill", "hanging out in place")
         self.ai = AIHandler(world_state=self.world)
+        self.vision = None if getattr(args, "no_vision", False) else VRChatVision()
         self.queue: asyncio.Queue[tuple[str, str, bool]] = asyncio.Queue()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.speaking = False
@@ -109,15 +100,13 @@ class LunaInVRChat:
             from luna.voice import VoiceHandler
             vrc_cable = os.getenv("VRCHAT_AUDIO_DEVICE", "CABLE Input").strip()
             if os.getenv("VRCHAT_MONITOR", "true").lower() in ("false", "0", "no"):
-                # One-PC mode: you hear Luna through YOUR VRChat window, so only feed her mic.
                 self.voice = VoiceHandler()
                 self.voice.audio_device = vrc_cable
             else:
-                # Also play her voice in your headphones.
                 self.voice = VoiceHandler(mirror_device=vrc_cable)
             self.voice.set_audio_device()
 
-    # ── Inputs ─────────────────────────────────────────────────────────────
+    # ── Inputs (Console + Your Mic + VRChat World Players Audio) ───────────
 
     def push(self, user: str, text: str, heard: bool):
         assert self.loop is not None
@@ -136,35 +125,73 @@ class LunaInVRChat:
             if text:
                 await self.queue.put((HOST_NAME, text, False))
 
-    def mic_thread(self):
+    def _start_stt_listener(self, device_query: str, speaker_label: str, tag: str):
+        """Runs a background Speech-to-Text listener on a specific input device."""
         import speech_recognition as sr
-        wanted = os.getenv("VRCHAT_LISTEN_DEVICE", "").strip().lower()
         index = None
-        if wanted:
-            for i, name in enumerate(sr.Microphone.list_microphone_names()):
-                if wanted in name.lower():
+        names = sr.Microphone.list_microphone_names()
+        if device_query:
+            q = device_query.lower()
+            for i, name in enumerate(names):
+                if q in name.lower():
                     index = i
+                    print(f"[{tag}] bound to '{name}' (index {i})")
                     break
             if index is None:
-                print(f"[mic] '{wanted}' not found, using default microphone")
+                print(f"[{tag}] device '{device_query}' not found; skipping {tag}")
+                return
         rec = sr.Recognizer()
         rec.dynamic_energy_threshold = True
-        with sr.Microphone(device_index=index) as source:
-            rec.adjust_for_ambient_noise(source, duration=1)
-            print("[mic] listening...")
-            while True:
-                try:
-                    audio = rec.listen(source, phrase_time_limit=12)
-                    if self.speaking:
-                        continue
-                    text = rec.recognize_google(audio)
-                    if text:
-                        print(f"\n[heard] {text}")
-                        self.push(HOST_NAME, text, True)
-                except sr.UnknownValueError:
-                    pass
-                except Exception as e:
-                    print(f"[mic] {e}")
+        try:
+            with sr.Microphone(device_index=index) as source:
+                rec.adjust_for_ambient_noise(source, duration=1)
+                print(f"[{tag}] listening for {speaker_label}...")
+                while True:
+                    try:
+                        audio = rec.listen(source, phrase_time_limit=12)
+                        if self.speaking:
+                            continue
+                        text = rec.recognize_google(audio)
+                        if text:
+                            # Attribute to a nearby player in the room if heard from world audio
+                            who = speaker_label
+                            if tag == "world-ears":
+                                players = [p for p in self.world.snapshot()["players"] if p.lower() != HOST_NAME.lower()]
+                                if players:
+                                    who = f"Nearby Player ({', '.join(players[:2])})"
+                            print(f"\n[{tag} heard {who}] {text}")
+                            self.push(who, text, True)
+                    except sr.UnknownValueError:
+                        pass
+                    except Exception as e:
+                        print(f"[{tag}] {e}")
+        except Exception as e:
+            print(f"[{tag}] could not open audio input: {e}")
+
+    def start_all_ears(self):
+        """Starts listening to both your microphone AND optional VRChat world audio (other players)."""
+        import speech_recognition as sr
+        mic_dev = os.getenv("VRCHAT_LISTEN_DEVICE", "").strip()
+        threading.Thread(
+            target=self._start_stt_listener,
+            args=(mic_dev, HOST_NAME, "mic"),
+            daemon=True,
+        ).start()
+
+        # Check for world audio device (to hear other players in VRChat)
+        world_dev = os.getenv("VRCHAT_WORLD_LISTEN_DEVICE", "").strip()
+        if not world_dev:
+            # Auto-detect Windows 'Stereo Mix' if enabled on the machine
+            for name in sr.Microphone.list_microphone_names():
+                if "stereo mix" in name.lower() or "what u hear" in name.lower():
+                    world_dev = name
+                    break
+        if world_dev:
+            threading.Thread(
+                target=self._start_stt_listener,
+                args=(world_dev, "VRChat Player", "world-ears"),
+                daemon=True,
+            ).start()
 
     # ── Core Speech + Body Coordinator ─────────────────────────────────────
 
@@ -199,30 +226,57 @@ class LunaInVRChat:
             self.world.set_behavior(mode_change, requested_action or mode_change)
             print(f"[autonomy] behavior mode -> {mode_change.upper()}")
 
+        # If the user asked something visual ("what do you see?", "look at my avatar", "follow me")
+        # or if her visual memory is older than 20s, take a fresh look through her eyes first!
+        vision_steer = None
+        if self.vision and (is_visual_question(text) or time.time() - self.vision.last_seen_ts > 20.0):
+            obs = await self.vision.look(question=text if is_visual_question(text) else None)
+            if obs["scene"]:
+                self.world.set_visual_scene(obs["scene"])
+                print(f"[eyes] {obs['scene']} (steer -> {obs['steer']})")
+            vision_steer = obs["steer"]
+
         self.osc.typing(True)
         reply = await self.ai.async_generate_response(text, "VRChat", user)
         self.osc.typing(False)
 
-        await self._speak_and_move(reply, action=requested_action, tag="luna")
+        await self._speak_and_move(reply, action=requested_action or vision_steer, tag="luna")
 
-    # ── Autonomous Body Loop (Continuous Life & Roaming) ───────────────────
+    # ── Autonomous Body Loop (Vision-Guided Roaming & Wall Avoidance) ──────
 
     async def body_loop(self):
-        """Keeps Luna's avatar physically alive—glancing around and casually roaming."""
+        """Keeps Luna's avatar physically alive—using her eyes to avoid walls and approach people."""
+        step_count = 0
         while True:
-            await asyncio.sleep(random.uniform(7.0, 14.0))
+            await asyncio.sleep(random.uniform(6.5, 12.5))
             if not self.autonomy_enabled or self.speaking:
                 continue
 
+            step_count += 1
             mode = self.world.snapshot()["mode"]
             if mode == "roam":
-                action = random.choices(
-                    ["wander_step", "look_around", "shift_weight", "jump"],
-                    weights=[45, 30, 18, 7],
-                    k=1,
-                )[0]
+                action = None
+                # Every 3rd roam tick, use full Vision LLM to steer toward people / interesting spots
+                if self.vision and step_count % 3 == 0:
+                    obs = await self.vision.look()
+                    if obs["scene"]:
+                        self.world.set_visual_scene(obs["scene"])
+                        print(f"[eyes] {obs['scene']} -> {obs['steer']}")
+                    action = obs["steer"]
+                else:
+                    # Fast OpenCV check (<2ms) so she never walks into a blank wall between vision ticks
+                    frame = await asyncio.to_thread(capture_luna_vrchat_frame)
+                    if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
+                        action = random.choice(["turn_left", "turn_right"])
+                        print(f"[eyes] wall detected ahead -> {action}")
+
+                if not action or action == "stay":
+                    action = random.choices(
+                        ["wander_step", "look_around", "curious_approach", "shift_weight", "jump"],
+                        weights=[40, 25, 15, 13, 7],
+                        k=1,
+                    )[0]
             else:
-                # 'chill' mode: stays in her spot next to you, just looking alive
                 action = random.choice(["look_around", "shift_weight"])
 
             self.world.record_action(action)
@@ -231,10 +285,10 @@ class LunaInVRChat:
             except Exception as e:
                 print(f"[body] {e}")
 
-    # ── Autonomous Mind Loop (Spontaneous Thoughts & Reactions) ────────────
+    # ── Autonomous Mind Loop (Vision-Grounded Spontaneous Thoughts) ────────
 
     async def mind_loop(self):
-        """Gives Luna free will to initiate conversation or comment on her surroundings."""
+        """Gives Luna free will to look around her VRChat view and comment on what she sees."""
         base_interval = max(15, int(getattr(self.args, "think_every", 38) or 38))
         while True:
             wait_s = random.uniform(base_interval * 0.8, base_interval * 1.35)
@@ -244,8 +298,23 @@ class LunaInVRChat:
             if time.time() - self.last_activity < base_interval * 0.7:
                 continue
 
+            # Take a fresh look through her eyes right before speaking!
+            vision_steer = None
+            if self.vision:
+                obs = await self.vision.look()
+                if obs["scene"]:
+                    self.world.set_visual_scene(obs["scene"])
+                    print(f"[eyes] {obs['scene']} (steer -> {obs['steer']})")
+                vision_steer = obs["steer"]
+
             snap = self.world.snapshot()
-            if snap["players"] and random.random() < 0.45:
+            if snap["visual_scene"]:
+                prompt = (
+                    f"[System: You are hanging out in VRChat world '{snap['world']}'. "
+                    f"Your eyes currently see: \"{snap['visual_scene']}\". "
+                    f"Make a spontaneous, natural comment about what you see or ask Kai / nearby players a quick question.]"
+                )
+            elif snap["players"] and random.random() < 0.45:
                 someone = random.choice(snap["players"])
                 prompt = f"[System: You are hanging out in VRChat world '{snap['world']}'. {someone} is in the room near you. Say something casual or ask them/Kai a quick question.]"
             else:
@@ -255,7 +324,7 @@ class LunaInVRChat:
                 self.osc.typing(True)
                 reply = await self.ai.async_generate_response(prompt, "VRChat", "System")
                 self.osc.typing(False)
-                await self._speak_and_move(reply, tag="luna (autonomous)")
+                await self._speak_and_move(reply, action=vision_steer, tag="luna (autonomous)")
             except Exception as e:
                 self.osc.typing(False)
                 print(f"[mind] {e}")
@@ -266,9 +335,13 @@ class LunaInVRChat:
             return
         if kind == "world_change":
             print(f"\n[vrchat] Entered world: {value}")
-            await asyncio.sleep(3.5)  # wait a moment for avatar to finish spawning
+            await asyncio.sleep(4.0)
             if not self.speaking:
-                prompt = f"[System: You just spawned into the VRChat world '{value}'. Look around and give your spontaneous first impression in 1-2 short sentences.]"
+                if self.vision:
+                    obs = await self.vision.look()
+                    if obs["scene"]:
+                        self.world.set_visual_scene(obs["scene"])
+                prompt = f"[System: You just spawned into the VRChat world '{value}'. Look at what your eyes see and give your spontaneous first impression in 1-2 short sentences.]"
                 self.osc.typing(True)
                 reply = await self.ai.async_generate_response(prompt, "VRChat", "System")
                 self.osc.typing(False)
@@ -277,7 +350,6 @@ class LunaInVRChat:
         elif kind == "player_join":
             print(f"\n[vrchat] Player joined: {value}")
             now = time.time()
-            # Cooldown so busy lobbies don't make her greet 20 people in a row
             if now - self.last_join_greet < 25.0 or self.speaking:
                 return
             self.last_join_greet = now
@@ -293,40 +365,45 @@ class LunaInVRChat:
 
     async def run(self):
         self.loop = asyncio.get_running_loop()
-        snap = self.world.snapshot()
         asyncio.create_task(watch_vrchat_logs(self.world, self.on_vrc_event))
-        await asyncio.sleep(0.5)  # allow initial VRChat log pre-scan to populate world & players
+        await asyncio.sleep(0.5)
         snap = self.world.snapshot()
 
         print("=" * 64)
         print("        LUNA AI VTUBER - AUTONOMOUS VRCHAT COMPANION")
         print("=" * 64)
         print(f"  Brain     : {self.ai.provider} / {self.ai.model}")
+        print(f"  Eyes      : {'ON (' + self.vision.model + ' + OpenCV wall/avatar tracking)' if self.vision else 'OFF'}")
         print(f"  VRChat    : world='{snap['world']}' | players={snap['players'] or ['(solo)']}")
         print(f"  OSC       : {self.osc.host}:{self.osc.port}  (chatbox + /input/* locomotion)")
         print(f"  Autonomy  : {'ON (' + snap['mode'].upper() + ' mode)' if self.autonomy_enabled else 'OFF (manual)'}")
         print(f"  Voice Out : {'OFF (chatbox only)' if not self.voice else ' + '.join(x for x in (self.voice.audio_device, self.voice.mirror_device) if x)}")
-        print(f"  Mic Listen: {'ON' if self.args.listen else 'OFF (use --listen)'}")
+        print(f"  Ears      : {'ON (Mic + World Audio)' if self.args.listen else 'OFF (use --listen)'}")
         print("=" * 64)
-        print("Tip: Tell her 'stay here' to chill in place, or 'roam around' to explore.")
+        print("Tip: Ask her 'what do you see?', 'look at my avatar', 'stay here', or 'roam around'.")
         print("Type below (or speak into your mic) to talk to Luna. Type 'quit' to exit.\n")
 
         if self.args.listen:
-            threading.Thread(target=self.mic_thread, daemon=True).start()
+            self.start_all_ears()
         asyncio.create_task(self.console_loop())
         if self.autonomy_enabled:
             asyncio.create_task(self.body_loop())
             asyncio.create_task(self.mind_loop())
 
-        # Immediate autonomous wake-up greeting in VRChat!
+        # Take an initial look through her VRChat window and greet!
+        if self.vision:
+            obs = await self.vision.look()
+            if obs["scene"]:
+                self.world.set_visual_scene(obs["scene"])
+                print(f"[eyes] {obs['scene']} (steer -> {obs['steer']})")
         wake_prompt = (
-            f"[System: You just woke up inside VRChat in the world '{snap['world']}'. "
-            f"Say a quick, energetic hello to Kai and look around the room.]"
+            f"[System: You just opened your eyes inside VRChat in the world '{snap['world']}'. "
+            f"Say a quick hello to Kai and mention what you see in front of you right now.]"
         )
         self.osc.typing(True)
         greeting = await self.ai.async_generate_response(wake_prompt, "VRChat", "System")
         self.osc.typing(False)
-        await self._speak_and_move(greeting, action="wander_step", tag="luna (awake)")
+        await self._speak_and_move(greeting, action="look_around", tag="luna (awake)")
 
         while True:
             user, text, heard = await self.queue.get()

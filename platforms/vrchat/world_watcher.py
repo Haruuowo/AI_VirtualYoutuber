@@ -84,6 +84,7 @@ class VRChatWorldState:
         self.players: set[str] = set()
         self.behavior_mode: str = "roam"       # 'roam' (exploring) or 'chill' (staying put)
         self.last_action: str = "looking around"
+        self.visual_scene: str = ""
         self.recent_events: deque[str] = deque(maxlen=5)
 
     def set_world(self, name: str):
@@ -120,6 +121,11 @@ class VRChatWorldState:
         with self._lock:
             self.last_action = action
 
+    def set_visual_scene(self, scene: str):
+        with self._lock:
+            if scene:
+                self.visual_scene = scene.strip()
+
     def snapshot(self) -> dict:
         with self._lock:
             return {
@@ -127,6 +133,7 @@ class VRChatWorldState:
                 "players": sorted(self.players),
                 "mode": self.behavior_mode,
                 "last_action": self.last_action,
+                "visual_scene": self.visual_scene,
                 "events": list(self.recent_events),
             }
 
@@ -134,6 +141,7 @@ class VRChatWorldState:
         snap = self.snapshot()
         players_str = ", ".join(snap["players"][:10]) if snap["players"] else "just you and Kai nearby"
         events_str = "; ".join(snap["events"][-3:]) if snap["events"] else "hanging out"
+        vision_str = f" What your eyes currently see in front of you: \"{snap['visual_scene']}\"." if snap["visual_scene"] else ""
         mode_desc = (
             "freely roaming and exploring the room on your own account"
             if snap["mode"] == "roam"
@@ -143,7 +151,8 @@ class VRChatWorldState:
             f"[LIVE VRCHAT STATE: You are physically inside VRChat on your own avatar account. "
             f"Current world: \"{snap['world']}\". "
             f"People in room: {players_str}. "
-            f"Your movement state: {mode_desc} (last move: {snap['last_action']}). "
+            f"Your movement state: {mode_desc} (last move: {snap['last_action']})."
+            f"{vision_str} "
             f"Recent events: {events_str}.]"
         )
 
