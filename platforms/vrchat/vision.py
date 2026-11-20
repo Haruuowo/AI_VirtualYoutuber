@@ -224,10 +224,12 @@ def _get_yolo():
 def detect_avatars_yolo(img: Image.Image) -> list[tuple[float, float, float, float, float]]:
     """
     Runs local YOLOv8-nano avatar detection on `img` (~32 ms at 384px, 0 API tokens).
-    Includes COCO classes [0, 15, 16, 77] (person + stylized kemono/chibi avatars) at conf>=0.18.
+    Includes COCO classes [0, 15, 16, 77] (person + stylized kemono/chibi avatars) at conf>=0.18,
+    and filters out Luna's own 3rd-person head/shoulders at the bottom-center of the frame.
     Returns bounding boxes [(x1, y1, x2, y2, conf), ...] sorted largest/closest first.
     """
     model = _get_yolo()
+    w, h = img.size
     results = model.predict(
         np.asarray(img),
         classes=[0, 15, 16, 77],
@@ -241,6 +243,11 @@ def detect_avatars_yolo(img: Image.Image) -> list[tuple[float, float, float, flo
             continue
         for box in res.boxes:
             x1, y1, x2, y2 = (float(v) for v in box.xyxy[0].tolist())
+            bw, bh = x2 - x1, y2 - y1
+            cx = (x1 + x2) / 2.0
+            # Filter out Luna's own 3rd-person local avatar head/shoulders in bottom-center
+            if y1 > h * 0.50 and y2 > h * 0.92 and (w * 0.33 < cx < w * 0.67) and (bw >= bh * 0.80):
+                continue
             conf = float(box.conf[0].item()) if box.conf is not None else 0.5
             boxes.append((x1, y1, x2, y2, conf))
     boxes.sort(key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)

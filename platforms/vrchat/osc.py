@@ -92,13 +92,22 @@ class VRChatOSC:
         ):
             self.client.send_message(addr, 0)
 
-    async def _ramp_axes(self, axes: list[tuple[str, float]], duration: float, run: bool = False):
-        """Streams ~40 Hz cosine-eased analog values over OSC so locomotion and turning feel human."""
+    async def _ramp_axes(
+        self,
+        axes: list[tuple[str, float]],
+        duration: float,
+        run: bool = False,
+        buttons: list[str] | None = None,
+    ):
+        """Streams ~40 Hz cosine-eased analog values (plus optional Desktop movement buttons) over OSC."""
         dur = max(0.05, float(duration))
+        btns = buttons or []
         async with self._move_lock:
             try:
                 if run:
                     self.client.send_message("/input/Run", 1)
+                for btn in btns:
+                    self.client.send_message(btn, 1)
                 t0 = time.monotonic()
                 while True:
                     elapsed = time.monotonic() - t0
@@ -111,19 +120,24 @@ class VRChatOSC:
             finally:
                 for addr, _ in axes:
                     self.client.send_message(addr, 0.0)
+                for btn in btns:
+                    self.client.send_message(btn, 0)
                 if run:
                     self.client.send_message("/input/Run", 0)
 
     async def move(self, vertical: float = 0.0, horizontal: float = 0.0, duration: float = 1.0, run: bool = False):
-        """Walks/strafes smoothly for `duration` seconds using analog OSC axes, then cleanly stops."""
+        """Walks/strafes cleanly using both smooth analog axes and Desktop MoveForward/MoveBackward buttons."""
         axes: list[tuple[str, float]] = []
+        buttons: list[str] = []
         if vertical:
-            axes.append(("/input/Vertical", float(max(-1.0, min(1.0, vertical)))))
+            v = float(max(-1.0, min(1.0, vertical)))
+            axes.append(("/input/Vertical", v))
+            buttons.append("/input/MoveForward" if v > 0 else "/input/MoveBackward")
         if horizontal:
             axes.append(("/input/Horizontal", float(max(-1.0, min(1.0, horizontal)))))
         if not axes:
             return
-        await self._ramp_axes(axes, duration, run=run)
+        await self._ramp_axes(axes, duration, run=run, buttons=buttons)
 
     async def turn(self, speed: float = 0.5, duration: float = 0.6):
         """Turns smoothly left (negative speed) or right (positive speed) for `duration` seconds."""

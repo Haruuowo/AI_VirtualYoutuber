@@ -173,6 +173,7 @@ class LunaInVRChat:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.speaking = False
         self.last_activity = time.time()
+        self.last_user_activity = 0.0
         self.last_join_greet = 0.0
         self.autonomy_enabled = not getattr(args, "no_autonomy", False)
         self.voice = None
@@ -343,13 +344,14 @@ class LunaInVRChat:
         else:
             self.osc.apply_cutesy_smug_face(blush=0.45, happy=True)
 
-        if allow_approach and height_ratio < 0.24 and abs(offset) <= 0.30:
-            await self.osc.move(vertical=0.7, duration=0.75)
+        if allow_approach and height_ratio < 0.52 and abs(offset) <= 0.30:
+            await self.osc.move(vertical=0.85, duration=1.4)
 
         return True
 
     async def respond(self, user: str, text: str):
         self.last_activity = time.time()
+        self.last_user_activity = self.last_activity
         mode_change, requested_action = detect_movement_request(text)
         if mode_change:
             self.world.set_behavior(mode_change, requested_action or mode_change)
@@ -376,16 +378,15 @@ class LunaInVRChat:
 
         await self._speak_and_move(reply, action=requested_action or vision_steer, tag="luna")
 
-    # ── Autonomous Body Loop (Cutesy-Smug Idle & YOLO Avatar Tracking) ─────
+    # ── Autonomous Body Loop (Cutesy-Smug Idle & Active Walking) ──────────
 
     async def body_loop(self):
         """
-        Keeps Luna's avatar standing smoothly in her native Unity idle animation:
-          - Never performs random horizontal twitching.
-          - When talking or when YOLO sees someone on screen, locks onto them and
-            plays stationary facial/eye expressions (`cutesy_idle` / `stare_smug`).
-          - Only walks or turns away from walls when quiet for 60+ seconds AND no person
-            is visible in her camera view.
+        Keeps Luna's avatar standing smoothly right after you speak, then actively
+        roams, turns away from walls, and walks toward detected players:
+          - Only pauses walking for 15s after a user/player speaks to her.
+          - When in ROAM mode, avoids walls with OpenCV and walks/approaches players
+            spotted by YOLOv8-nano instead of staying locked in place.
         """
         self.osc.apply_cutesy_smug_face(blush=0.4, happy=True, sleepy_smug=True)
         while True:
@@ -394,23 +395,23 @@ class LunaInVRChat:
                 continue
 
             mode = self.world.snapshot()["mode"]
-            recently_talking = (time.time() - self.last_activity) < 60.0
+            recently_talking = (time.time() - self.last_user_activity) < 15.0
 
             if mode == "chill" or recently_talking:
                 await self._stare_at_speaker(allow_approach=True)
                 action = random.choices(["cutesy_idle", "stare_smug", "wave"], weights=[60, 32, 8], k=1)[0]
             else:
-                found = await self._stare_at_speaker(allow_approach=True)
-                if found:
-                    # She sees someone right now — stay locked on them instead of wandering into a wall!
-                    action = random.choices(["cutesy_idle", "stare_smug"], weights=[65, 35], k=1)[0]
+                frame = await asyncio.to_thread(capture_luna_vrchat_frame)
+                if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
+                    action = random.choice(["turn_left", "turn_right"])
+                    print(f"[eyes] wall ahead (OpenCV) -> {action}")
                 else:
-                    frame = await asyncio.to_thread(capture_luna_vrchat_frame)
-                    if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
-                        action = random.choice(["turn_left", "turn_right"])
-                        print(f"[eyes] wall ahead (OpenCV) -> {action}")
-                    else:
-                        action = random.choices(["wander_step", "look_around"], weights=[55, 45], k=1)[0]
+                    await self._stare_at_speaker(allow_approach=True)
+                    action = random.choices(
+                        ["wander_step", "curious_approach", "cutesy_idle", "look_around"],
+                        weights=[45, 25, 15, 15],
+                        k=1,
+                    )[0]
 
             self.world.record_action(action)
             try:
