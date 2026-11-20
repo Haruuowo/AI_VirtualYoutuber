@@ -99,30 +99,37 @@ class AIHandler:
                 raise
         else:
             try:
+                model_low = (self.model or "").lower()
                 kwargs = dict(
                     model=self.model,
-                    max_tokens=max(max_tokens, 90),
+                    max_tokens=max(max_tokens, 200),
                     temperature=temperature,
                     messages=messages,
                 )
-                if "qwen" in (self.model or "").lower():
+                if "qwen" in model_low:
                     kwargs["reasoning_effort"] = "none"
+                elif "gpt-oss" in model_low:
+                    kwargs["reasoning_effort"] = "low"
                 response = self.client.chat.completions.create(**kwargs)
                 return response.choices[0].message.content
             except Exception as e:
                 err_str = str(e)
                 if '429' in err_str or 'rate_limit' in err_str:
-                    # First try Groq's separate model pool (openai/gpt-oss-120b) before local Ollama
-                    try:
-                        resp = self.client.chat.completions.create(
-                            model="openai/gpt-oss-120b",
-                            max_tokens=max(max_tokens, 90),
-                            temperature=temperature,
-                            messages=messages,
-                        )
-                        return resp.choices[0].message.content
-                    except Exception:
-                        pass
+                    # Fail over between Groq's separate model pools (gpt-oss-120b <-> gpt-oss-20b)
+                    for fallback_model in ("openai/gpt-oss-120b", "openai/gpt-oss-20b"):
+                        if fallback_model == self.model:
+                            continue
+                        try:
+                            resp = self.client.chat.completions.create(
+                                model=fallback_model,
+                                max_tokens=max(max_tokens, 200),
+                                temperature=temperature,
+                                reasoning_effort="low",
+                                messages=messages,
+                            )
+                            return resp.choices[0].message.content
+                        except Exception:
+                            pass
                     print(f"[AI Fallback] Groq rate limit hit. Seamlessly falling back to local Ollama...")
                     try:
                         import ollama

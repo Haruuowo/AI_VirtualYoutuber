@@ -195,7 +195,11 @@ def is_facing_blank_wall(img: Image.Image) -> bool:
 
 
 class VRChatVision:
-    """Gives Luna real-time visual perception of her VRChat window."""
+    """
+    Gives Luna real-time visual perception of her VRChat window.
+    Includes a <15ms zero-token Local OpenCV visual analyzer so she can ALWAYS see,
+    track avatars, and avoid walls with 0 lag even when cloud vision tokens run out.
+    """
 
     def __init__(self):
         self.api_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -203,6 +207,77 @@ class VRChatVision:
         self.last_scene: str = ""
         self.last_steer: str = "wander_step"
         self.last_seen_ts: float = 0.0
+        self._cloud_cooldown_until: float = 0.0
+        self._face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        self._body_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_upperbody.xml")
+
+    @staticmethod
+    def _describe_palette(arr: np.ndarray) -> str:
+        mean_rgb = arr.mean(axis=(0, 1))
+        r, g, b = float(mean_rgb[0]), float(mean_rgb[1]), float(mean_rgb[2])
+        brightness = (r + g + b) / 3.0
+        light_desc = "bright" if brightness > 150 else ("dim, moody" if brightness < 65 else "cozy")
+        if b > r + 22 and b > g + 15:
+            tone = "blue-lit"
+        elif r > b + 25 and r > g + 15:
+            tone = "warm red/amber-toned"
+        elif g > r + 20 and g > b + 20:
+            tone = "green-tinted"
+        elif abs(r - b) < 18 and r > 110 and b > 110 and g < r - 15:
+            tone = "neon purple/pink"
+        else:
+            tone = "neutral-toned"
+        return f"{light_desc} {tone}"
+
+    def _analyze_local_opencv(self, img: Image.Image) -> dict:
+        """
+        Instant (<15ms, 0 API tokens) OpenCV scene & avatar analyzer.
+        Detects faces/bodies, left/center/right visual activity, wall blockage, and room color palette.
+        """
+        arr = np.asarray(img)
+        h, w, _ = arr.shape
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        palette = self._describe_palette(arr)
+
+        if is_facing_blank_wall(img):
+            # Pick whichever side has more visual detail (open room)
+            edges = cv2.Canny(gray, 50, 150)
+            left_e = np.count_nonzero(edges[:, : w // 2])
+            right_e = np.count_nonzero(edges[:, w // 2 :])
+            steer = "turn_left" if left_e > right_e else "turn_right"
+            return {"scene": f"Close to a flat wall in a {palette} room; turning toward open space.", "steer": steer}
+
+        # 1. Check for character faces or upper bodies
+        faces = self._face_cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=4, minSize=(20, 20))
+        bodies = self._body_cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=3, minSize=(36, 36))
+        boxes = list(faces) + list(bodies)
+        if boxes:
+            # Pick largest detected character region
+            x, y, bw, bh = max(boxes, key=lambda rect: rect[2] * rect[3])
+            cx = (x + bw / 2.0) / float(w)
+            size_ratio = (bw * bh) / float(w * h)
+            if cx < 0.36:
+                return {"scene": f"I see an avatar on the left side of my view in this {palette} space.", "steer": "turn_left"}
+            if cx > 0.64:
+                return {"scene": f"I see an avatar on the right side of my view in this {palette} space.", "steer": "turn_right"}
+            if size_ratio > 0.16:
+                return {"scene": f"An avatar is standing right in front of me up close in this {palette} room.", "steer": "look_around"}
+            return {"scene": f"I see an avatar ahead in the center of this {palette} room.", "steer": "curious_approach"}
+
+        # 2. Saliency / Edge distribution across left, center, right thirds
+        edges = cv2.Canny(gray[int(h * 0.15) : int(h * 0.85), :], 45, 140)
+        third = w // 3
+        e_left = int(np.count_nonzero(edges[:, :third]))
+        e_mid = int(np.count_nonzero(edges[:, third : 2 * third]))
+        e_right = int(np.count_nonzero(edges[:, 2 * third :]))
+
+        if e_mid >= e_left and e_mid >= e_right and e_mid > 350:
+            return {"scene": f"Looking across an open {palette} VRChat room with details straight ahead.", "steer": "wander_step"}
+        if e_left > e_right * 1.35:
+            return {"scene": f"Open {palette} room with more activity and detail to my left.", "steer": "turn_left"}
+        if e_right > e_left * 1.35:
+            return {"scene": f"Open {palette} room with more activity and detail to my right.", "steer": "turn_right"}
+        return {"scene": f"Standing in a {palette} VRChat area with open space around me.", "steer": "wander_step"}
 
     @staticmethod
     def _encode_jpeg_b64(img: Image.Image, quality: int = 72) -> str:
@@ -282,19 +357,29 @@ class VRChatVision:
 
     async def look(self, question: str | None = None) -> dict:
         """
-        Captures Luna's VRChat window and analyzes what she sees in ~0.6s.
-        Returns {'scene': str, 'steer': str, 'wall': bool}.
+        Captures Luna's VRChat window and analyzes what she sees.
+        Uses fast local OpenCV (<15ms, 0 tokens) immediately if cloud vision is on rate-limit cooldown.
         """
         img = await asyncio.to_thread(capture_luna_vrchat_frame)
         if img is None:
             return {"scene": "", "steer": "look_around", "wall": False}
 
         wall = await asyncio.to_thread(is_facing_blank_wall, img)
-        try:
-            res = await asyncio.to_thread(self._call_vision_sync, img, question)
-        except Exception as e:
-            print(f"[vision] {e}")
-            res = {"scene": "", "steer": "turn_right" if wall else "look_around"}
+
+        # If cloud vision tokens are exhausted / on cooldown, use instant local OpenCV vision (0 lag!)
+        if time.time() < self._cloud_cooldown_until:
+            res = await asyncio.to_thread(self._analyze_local_opencv, img)
+        else:
+            try:
+                res = await asyncio.to_thread(self._call_vision_sync, img, question)
+            except Exception as e:
+                err_s = str(e)
+                if "429" in err_s or "rate_limit" in err_s:
+                    # Stop hammering cloud vision while out of tokens; switch to instant local OpenCV eyes!
+                    cooldown = 900.0 if "TPD" in err_s or "tokens per day" in err_s else 35.0
+                    self._cloud_cooldown_until = time.time() + cooldown
+                    print(f"[eyes] Cloud vision quota reached — switched to instant Local OpenCV Eyes (0ms lag)!")
+                res = await asyncio.to_thread(self._analyze_local_opencv, img)
 
         steer = res.get("steer", "look_around")
         if wall and steer in ("wander_step", "curious_approach", "walk_forward"):
