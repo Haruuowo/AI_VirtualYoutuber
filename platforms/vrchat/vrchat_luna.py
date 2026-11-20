@@ -91,12 +91,11 @@ def _newest_log_is_profile1() -> bool:
         return False
 
 
-def ensure_both_vrchat_windows():
+def ensure_luna_vrchat_window():
     """
-    One-button launcher:
-      - If 0 VRChat windows are open -> launches YOUR main VRChat + LUNA's small VRChat.
-      - If 1 VRChat window is open   -> launches whichever one is missing (yours or Luna's).
-      - If 2+ VRChat windows are open -> does nothing (both already running).
+    Launches ONLY Luna's VRChat window (Profile 1, OSC port 9002) if it isn't
+    already open. Your main VRChat account (Profile 0) is opened separately
+    by you via Steam so the two Easy Anti-Cheat splash screens never collide.
     """
     vrc_dir = _find_vrc_dir()
     if not vrc_dir:
@@ -107,24 +106,13 @@ def ensure_both_vrchat_windows():
         "-screen-width", "854", "-screen-height", "480", "-screen-fullscreen", "0",
         "--fps=30", "--osc=9002:127.0.0.1:9003",
     ]
-    main_args = [launch_exe, "--profile=0", "--no-vr"]
 
     count = _count_vrchat_processes()
-    if count == 0:
-        print("[launcher] Opening YOUR Main VRChat window (Profile 0)...")
-        subprocess.Popen(main_args, cwd=str(vrc_dir))
-        time.sleep(4.0)
-        print("[launcher] Opening LUNA's Small VRChat window (Profile 1, OSC 9002)...")
+    if count == 0 or (count == 1 and not _newest_log_is_profile1()):
+        print("[launcher] Opening LUNA's VRChat window (Profile 1, 854x480, OSC 9002)...")
         subprocess.Popen(luna_args, cwd=str(vrc_dir))
-    elif count == 1:
-        if _newest_log_is_profile1():
-            print("[launcher] Luna's window is open — opening YOUR Main VRChat window (Profile 0)...")
-            subprocess.Popen(main_args, cwd=str(vrc_dir))
-        else:
-            print("[launcher] Your VRChat is open — opening LUNA's Small VRChat window (Profile 1, OSC 9002)...")
-            subprocess.Popen(luna_args, cwd=str(vrc_dir))
     else:
-        print("[launcher] Both VRChat windows are already running!")
+        print("[launcher] Luna's VRChat window (Profile 1) is already open!")
 
 AUTONOMOUS_THOUGHT_PROMPTS = [
     "Look at what your eyes currently see in front of you in VRChat and make a natural, witty comment about it.",
@@ -509,7 +497,7 @@ def main():
         return
     _kill_other_luna_brains()
     if not getattr(args, "no_launch", False):
-        ensure_both_vrchat_windows()
+        ensure_luna_vrchat_window()
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
