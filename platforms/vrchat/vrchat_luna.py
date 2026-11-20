@@ -37,7 +37,13 @@ import luna  # noqa: E402,F401  (loads project .env)
 from luna.brain import AIHandler  # noqa: E402
 from luna.core.intent import is_luna_mentioned  # noqa: E402
 from platforms.vrchat.osc import VRChatOSC, detect_movement_request  # noqa: E402
-from platforms.vrchat.vision import VRChatVision, capture_luna_vrchat_frame, is_facing_blank_wall, is_visual_question  # noqa: E402
+from platforms.vrchat.vision import (  # noqa: E402
+    VRChatVision,
+    capture_luna_vrchat_frame,
+    find_target_horizontal_offset,
+    is_facing_blank_wall,
+    is_visual_question,
+)
 from platforms.vrchat.world_watcher import VRChatWorldState, default_vrc_log_dir, watch_vrchat_logs  # noqa: E402
 
 HOST_NAME = os.getenv("VRCHAT_HOST_NAME", "Kai")
@@ -293,12 +299,24 @@ class LunaInVRChat:
             self.speaking = False
             self.last_activity = time.time()
 
+    async def _stare_at_speaker(self):
+        """Captures a quick frame (<5ms OpenCV) and turns Luna to stare directly at the person in front of her."""
+        frame = await asyncio.to_thread(capture_luna_vrchat_frame)
+        if frame is not None:
+            offset = await asyncio.to_thread(find_target_horizontal_offset, frame)
+            await self.osc.lock_gaze_on_offset(offset)
+        else:
+            self.osc.apply_cutesy_smug_face(blush=0.45, happy=True)
+
     async def respond(self, user: str, text: str):
         self.last_activity = time.time()
         mode_change, requested_action = detect_movement_request(text)
         if mode_change:
             self.world.set_behavior(mode_change, requested_action or mode_change)
             print(f"[autonomy] behavior mode -> {mode_change.upper()}")
+
+        # Immediately turn and lock her eyes onto you while thinking of her reply!
+        stare_task = asyncio.create_task(self._stare_at_speaker())
 
         # Only call cloud vision when you ask a visual question ("what do you see?", "look at my avatar")
         # or if she hasn't looked in 45s — saves 90% of vision tokens and keeps replies fast (<0.8s)!
@@ -313,38 +331,43 @@ class LunaInVRChat:
 
         self.osc.typing(True)
         reply = await self.ai.async_generate_response(text, "VRChat", user)
+        await stare_task
         self.osc.typing(False)
 
         await self._speak_and_move(reply, action=requested_action or vision_steer, tag="luna")
 
-    # ── Autonomous Body Loop (Interactive Presence, Not Blind Pacing) ──────
+    # ── Autonomous Body Loop (Cutesy-Smug Idle & Gaze Lock) ────────────────
 
     async def body_loop(self):
         """
-        Keeps Luna's avatar feeling like a real player instead of a pacing NPC:
-          - While you are actively talking with her (last 45s), she STAYS WITH YOU
-            and only does subtle idle gestures (shift_weight, wave, look_around).
-          - Only when things have been quiet for 45+ seconds in ROAM mode does she
-            casually stroll around using OpenCV wall-avoidance (0 API tokens).
+        Keeps Luna's avatar feeling like a real player with a cutesy-smug idle presence:
+          - While you are actively talking with her (last 60s), she STAYS FACING YOU,
+            locks her gaze on you, and plays her cutesy-smug idle animations (blush,
+            half-lidded smug smile, slow blinks, subtle hip sway, occasional wave).
+          - Only when things have been quiet for 60+ seconds in ROAM mode does she
+            casually stroll a step or glance around.
         """
+        self.osc.apply_cutesy_smug_face(blush=0.4, happy=True, sleepy_smug=True)
         while True:
-            await asyncio.sleep(random.uniform(9.0, 15.0))
+            await asyncio.sleep(random.uniform(6.0, 10.5))
             if not self.autonomy_enabled or self.speaking:
                 continue
 
             mode = self.world.snapshot()["mode"]
-            recently_talking = (time.time() - self.last_activity) < 45.0
+            recently_talking = (time.time() - self.last_activity) < 60.0
 
             if mode == "chill" or recently_talking:
-                # Stay engaged with the person talking to her instead of walking away!
-                action = random.choices(["shift_weight", "look_around", "wave"], weights=[55, 33, 12], k=1)[0]
+                # Re-center her stare on you and run her cutesy-smug idle expression
+                await self._stare_at_speaker()
+                action = random.choices(["cutesy_idle", "stare_smug", "wave"], weights=[58, 32, 10], k=1)[0]
             else:
                 frame = await asyncio.to_thread(capture_luna_vrchat_frame)
                 if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
                     action = random.choice(["turn_left", "turn_right"])
                     print(f"[eyes] wall ahead (OpenCV) -> {action}")
                 else:
-                    action = random.choices(["wander_step", "look_around", "shift_weight"], weights=[45, 35, 20], k=1)[0]
+                    await self._stare_at_speaker()
+                    action = random.choices(["cutesy_idle", "stare_smug", "wander_step"], weights=[45, 25, 30], k=1)[0]
 
             self.world.record_action(action)
             try:

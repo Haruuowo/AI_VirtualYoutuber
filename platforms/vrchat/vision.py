@@ -194,6 +194,40 @@ def is_facing_blank_wall(img: Image.Image) -> bool:
     return edge_ratio < 0.008 and std_val < 18.0
 
 
+def find_target_horizontal_offset(img: Image.Image) -> float:
+    """
+    Fast (<4 ms) OpenCV gaze-lock helper: finds the horizontal center of the most
+    prominent person/avatar figure in Luna's view.
+    Returns a normalized offset in [-1.0, 1.0]:
+        negative = target is to the LEFT of her crosshair
+        0.0      = target is DEAD CENTER (she is staring right at them)
+        positive = target is to the RIGHT of her crosshair
+    """
+    arr = np.asarray(img)
+    h, w, _ = arr.shape
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+
+    # Focus on the middle vertical band where player avatars stand (ignore ceiling & floor)
+    y0, y1 = int(h * 0.15), int(h * 0.85)
+    roi = gray[y0:y1, :]
+    edges = cv2.Canny(roi, 50, 150)
+
+    # Weight foreground vertical structures (avatars have high local edge & color contrast)
+    col_energy = edges.sum(axis=0).astype(np.float32)
+    total = float(col_energy.sum())
+    if total < 1000.0:
+        return 0.0
+
+    # Smooth column energy with a window ~18% of screen width (typical avatar width)
+    win = max(9, int(w * 0.18))
+    kernel = np.ones(win, dtype=np.float32) / float(win)
+    smoothed = np.convolve(col_energy, kernel, mode="same")
+    peak_x = float(np.argmax(smoothed))
+    # Map [0, w] -> [-1.0, +1.0]
+    offset = (peak_x - (w / 2.0)) / (w / 2.0)
+    return float(max(-1.0, min(1.0, offset)))
+
+
 class VRChatVision:
     """
     Gives Luna real-time visual perception of her VRChat window.

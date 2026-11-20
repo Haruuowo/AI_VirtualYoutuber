@@ -121,34 +121,55 @@ class VRChatOSC:
         await asyncio.sleep(0.15)
         self.client.send_message("/input/Jump", 0)
 
-    # ── Avatar parameters, Hand Emotes & Facial Expressions ────────────────
+    # ── Avatar parameters, Hand Emotes & Cutesy-Smug Facial Expressions ────
 
     def set_param(self, name: str, value):
         """Drives an avatar parameter, e.g. VRCEmote or custom gesture toggle."""
         self.client.send_message(f"/avatar/parameters/{name}", value)
 
-    async def emote(self, emote_id: int, duration: float = 2.8, happy: bool = False, blush: float = 0.0):
+    def set_eyes(self, pitch: float = 0.0, yaw: float = 0.0, closed: float = 0.18):
+        """
+        Drives VRChat native OSC eye tracking so her eyes lock onto you or do smug glances.
+        pitch/yaw in degrees (-25..25), closed in [0.0..1.0] (0.18 = half-lidded smug look).
+        """
+        self.client.send_message("/tracking/eye/LeftRightPitchYaw", [float(pitch), float(yaw), float(pitch), float(yaw)])
+        self.client.send_message("/tracking/eye/EyesClosedAmount", float(max(0.0, min(1.0, closed))))
+
+    def apply_cutesy_smug_face(self, blush: float = 0.4, happy: bool = True, sleepy_smug: bool = False):
+        """Applies a persistent cutesy-smug facial expression across her avatar parameters."""
+        self.set_param("Happy", bool(happy))
+        self.set_param("Blush", float(max(0.0, min(1.0, blush))))
+        self.set_param("Sleepy", bool(sleepy_smug))
+        # Blendtree facial expression support (for avatars using VRCFaceBlendH/V)
+        self.set_param("VRCFaceBlendH", 0.55 if happy else 0.0)
+        self.set_param("VRCFaceBlendV", 0.35)
+        self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.22 if sleepy_smug else 0.14)
+
+    async def lock_gaze_on_offset(self, offset: float):
+        """
+        Turns Luna's head/body toward `offset` (-1.0 left .. +1.0 right) so she centers
+        the speaker in her view and locks her eyes straight on them.
+        """
+        self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=False)
+        self.set_eyes(pitch=-2.0, yaw=float(offset * 12.0), closed=0.14)
+        if abs(offset) > 0.14:
+            speed = 0.45 if offset > 0 else -0.45
+            dur = min(0.55, max(0.12, abs(offset) * 0.48))
+            await self.turn(speed=speed, duration=dur)
+        self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.15)
+
+    async def emote(self, emote_id: int, duration: float = 2.8, happy: bool = True, blush: float = 0.45):
         """
         Triggers a standard VRChat SDK3 hand/body emote (/avatar/parameters/VRCEmote 1..8)
-        plus optional facial parameters (Happy, Blush) supported by Luna's avatar, then resets.
-            1 = Wave (hand wave)      5 = Dance
-            2 = Clap (clapping hands) 6 = Backflip
-            3 = Point (point hand)    7 = SadKick
-            4 = Cheer (raise arms)    8 = Die / Dramatic faint
+        while maintaining her cutesy-smug facial expression.
         """
         try:
-            if happy:
-                self.set_param("Happy", True)
-            if blush > 0:
-                self.set_param("Blush", float(min(1.0, blush)))
+            self.apply_cutesy_smug_face(blush=blush, happy=happy)
             self.set_param("VRCEmote", int(emote_id))
             await asyncio.sleep(max(0.5, duration))
         finally:
             self.set_param("VRCEmote", 0)
-            if happy:
-                self.set_param("Happy", False)
-            if blush > 0:
-                self.set_param("Blush", 0.0)
+            self.apply_cutesy_smug_face(blush=0.35, happy=True)
 
     # ── High-Level Expressive Actions & Autonomous Body Language ───────────
 
@@ -184,9 +205,29 @@ class VRChatOSC:
             await self.emote(8, duration=3.5)
 
         elif action == "blush":
-            self.set_param("Happy", True)
-            self.set_param("Blush", 1.0)
+            self.apply_cutesy_smug_face(blush=1.0, happy=True, sleepy_smug=True)
             await self.emote(7, duration=2.5, happy=True, blush=1.0)
+
+        elif action == "stare_smug":
+            # Stationary cutesy-smug stare: stays locked on you with a slow smug blink & subtle blush
+            self.apply_cutesy_smug_face(blush=0.55, happy=True, sleepy_smug=True)
+            self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.28)
+            await asyncio.sleep(0.35)
+            self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.14)
+            await asyncio.sleep(0.6)
+
+        elif action == "cutesy_idle":
+            # Natural cutesy-smug idle animation: smug side-glance + slow blink + subtle hip sway
+            self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=random.choice([True, False]))
+            glance = random.choice([-10.0, 10.0, 0.0])
+            self.set_eyes(pitch=-2.0, yaw=glance, closed=0.22)
+            side = random.choice([-0.32, 0.32])
+            await self.move(horizontal=side, duration=0.22)
+            await asyncio.sleep(0.25)
+            # Slow cute blink then return eyes to center stare
+            self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.85)
+            await asyncio.sleep(0.14)
+            self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.16)
 
         elif action == "jump":
             await self.jump()
@@ -248,23 +289,22 @@ class VRChatOSC:
 
     @staticmethod
     def pick_reaction_for_reply(reply_text: str) -> str:
-        """Chooses a natural body-language gesture or hand emote that matches what Luna is saying."""
+        """
+        Chooses a natural, stationary gesture while talking so she keeps staring
+        right at you instead of turning away mid-sentence.
+        """
         low = reply_text.lower()
         if any(w in low for w in ("hi ", "hey", "hello", "welcome", "nice to meet", "sup", "wave", "bye", "see ya")):
-            return random.choice(["wave", "wave", "curious_approach"])
+            return "wave"
         if any(w in low for w in ("haha", "lol", "yay", "hype", "lets go", "let's go", "awesome", "love", "congrats", "nice")):
-            return random.choice(["cheer", "clap", "happy_hop"])
+            return random.choice(["clap", "cheer", "stare_smug"])
         if any(w in low for w in ("dance", "vibe", "music", "groove", "party")):
             return "dance"
-        if any(w in low for w in ("you", "that", "there", "look at", "check out", "point")):
-            return random.choice(["point", "look_around"])
-        if any(w in low for w in ("cute", "blush", "flatter", "sweet", "aw", "shy")):
+        if any(w in low for w in ("you", "your", "that", "there", "look at", "check out", "point", "blame")):
+            return random.choice(["point", "stare_smug", "stare_smug"])
+        if any(w in low for w in ("cute", "blush", "flatter", "sweet", "aw", "shy", "pretty")):
             return "blush"
-        if any(w in low for w in ("where", "who", "look", "see", "place", "world", "room", "around")):
-            return "look_around"
-        if any(w in low for w in ("woah", "wait", "chill", "hold up", "scary", "creepy")):
-            return "step_back"
-        return random.choice(["wave", "point", "clap", "shift_weight", "look_around"])
+        return random.choice(["stare_smug", "stare_smug", "cutesy_idle", "point"])
 
 
 def detect_movement_request(text: str) -> tuple[str | None, str | None]:
