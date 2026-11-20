@@ -205,6 +205,30 @@ class LunaInVRChat:
             if text:
                 await self.queue.put((HOST_NAME, text, False))
 
+    _WHISPER_NOISE = {"", ".", "...", "you", "you.", "thank you", "thank you.", "thanks for watching", "thanks for watching!"}
+
+    def _transcribe_audio(self, rec, audio_data) -> str:
+        """Uses fast Groq whisper-large-v3-turbo (~0.18s) when GROQ_API_KEY is set, else Google STT."""
+        groq_key = os.getenv("GROQ_API_KEY", "").strip()
+        if groq_key:
+            try:
+                client = getattr(self, "_groq_stt", None)
+                if client is None:
+                    from groq import Groq
+                    client = Groq(api_key=groq_key)
+                    self._groq_stt = client
+                wav_bytes = audio_data.get_wav_data(convert_rate=16000, convert_width=2)
+                resp = client.audio.transcriptions.create(
+                    file=("speech.wav", wav_bytes),
+                    model="whisper-large-v3-turbo",
+                    language="en",
+                )
+                text = (getattr(resp, "text", None) or "").strip()
+                return "" if text.lower() in self._WHISPER_NOISE else text
+            except Exception:
+                pass
+        return rec.recognize_google(audio_data)
+
     def _start_stt_listener(self, device_query: str, speaker_label: str, tag: str):
         """Runs a background Speech-to-Text listener on a specific input device."""
         import speech_recognition as sr
@@ -233,7 +257,7 @@ class LunaInVRChat:
                         audio = rec.listen(source, phrase_time_limit=7)
                         if self.speaking:
                             continue
-                        text = rec.recognize_google(audio)
+                        text = self._transcribe_audio(rec, audio)
                         if text:
                             who = speaker_label
                             if tag == "world-ears":

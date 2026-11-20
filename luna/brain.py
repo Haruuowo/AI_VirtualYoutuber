@@ -161,10 +161,17 @@ class AIHandler:
         mood = random.choice(self.moods)
         full_system = self._build_system_prompt(mood)
 
-        self.memory.append({"role": "user", "content": f"{username} ({platform}): {message}"})
+        is_system_prompt = (username == "System") or str(message).strip().startswith("[System:")
+        if is_system_prompt:
+            # Keep internal [System: ...] prompts out of rolling memory so chat context stays clean
+            messages = self._build_messages(full_system)
+            messages.append({"role": "user", "content": str(message)})
+        else:
+            self.memory.append({"role": "user", "content": f"{username} ({platform}): {message}"})
+            messages = self._build_messages(full_system)
 
         try:
-            raw_text = self._call_llm(self._build_messages(full_system), max_tokens=50, temperature=0.75)
+            raw_text = self._call_llm(messages, max_tokens=50, temperature=0.75)
             filtered = filter_response(raw_text.strip())
 
             self.memory.append({"role": "assistant", "content": filtered})

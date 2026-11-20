@@ -16,15 +16,29 @@ Supported native VRChat OSC endpoints used here:
     /avatar/parameters/*    any                   custom avatar emotes
 """
 import asyncio
+import math
 import os
 import random
 import re
 import textwrap
+import time
 
 from pythonosc.udp_client import SimpleUDPClient
 
 CHATBOX_LIMIT = 144          # VRChat hard limit per chatbox message
 PAGE_DELAY = 2.2             # VRChat rate-limits the chatbox; ~2s between pages is safe
+
+
+def _ease_scale(progress: float, duration: float) -> float:
+    """Cosine/sine ease-in/ease-out envelope in [0.0, 1.0] for natural analog stick motion."""
+    p = max(0.0, min(1.0, progress))
+    if duration < 0.6:
+        return math.sin(math.pi * p)
+    if p < 0.25:
+        return 0.5 * (1.0 - math.cos(math.pi * (p / 0.25)))
+    if p > 0.75:
+        return 0.5 * (1.0 - math.cos(math.pi * ((1.0 - p) / 0.25)))
+    return 1.0
 
 
 class VRChatOSC:
@@ -78,42 +92,45 @@ class VRChatOSC:
         ):
             self.client.send_message(addr, 0)
 
-    async def move(self, vertical: float = 0.0, horizontal: float = 0.0, duration: float = 1.0, run: bool = False):
-        """Walks/strafes for `duration` seconds using both Axis and Button OSC endpoints, then cleanly stops."""
+    async def _ramp_axes(self, axes: list[tuple[str, float]], duration: float, run: bool = False):
+        """Streams ~40 Hz cosine-eased analog values over OSC so locomotion and turning feel human."""
+        dur = max(0.05, float(duration))
         async with self._move_lock:
             try:
                 if run:
                     self.client.send_message("/input/Run", 1)
-                if vertical:
-                    v = float(max(-1.0, min(1.0, vertical)))
-                    self.client.send_message("/input/Vertical", v)
-                    self.client.send_message("/input/MoveForward" if v > 0 else "/input/MoveBackward", 1)
-                if horizontal:
-                    h = float(max(-1.0, min(1.0, horizontal)))
-                    self.client.send_message("/input/Horizontal", h)
-                    self.client.send_message("/input/MoveRight" if h > 0 else "/input/MoveLeft", 1)
-                await asyncio.sleep(max(0.05, duration))
+                t0 = time.monotonic()
+                while True:
+                    elapsed = time.monotonic() - t0
+                    if elapsed >= dur:
+                        break
+                    scale = _ease_scale(elapsed / dur, dur)
+                    for addr, target in axes:
+                        self.client.send_message(addr, float(target * scale))
+                    await asyncio.sleep(min(0.025, dur - elapsed))
             finally:
-                self.client.send_message("/input/Vertical", 0.0)
-                self.client.send_message("/input/Horizontal", 0.0)
-                for btn in ("/input/MoveForward", "/input/MoveBackward", "/input/MoveLeft", "/input/MoveRight"):
-                    self.client.send_message(btn, 0)
+                for addr, _ in axes:
+                    self.client.send_message(addr, 0.0)
                 if run:
                     self.client.send_message("/input/Run", 0)
 
+    async def move(self, vertical: float = 0.0, horizontal: float = 0.0, duration: float = 1.0, run: bool = False):
+        """Walks/strafes smoothly for `duration` seconds using analog OSC axes, then cleanly stops."""
+        axes: list[tuple[str, float]] = []
+        if vertical:
+            axes.append(("/input/Vertical", float(max(-1.0, min(1.0, vertical)))))
+        if horizontal:
+            axes.append(("/input/Horizontal", float(max(-1.0, min(1.0, horizontal)))))
+        if not axes:
+            return
+        await self._ramp_axes(axes, duration, run=run)
+
     async def turn(self, speed: float = 0.5, duration: float = 0.6):
-        """Turns left (negative speed) or right (positive speed) for `duration` seconds."""
-        async with self._move_lock:
-            try:
-                s = float(max(-1.0, min(1.0, speed)))
-                self.client.send_message("/input/LookHorizontal", s)
-                if s != 0:
-                    self.client.send_message("/input/LookRight" if s > 0 else "/input/LookLeft", 1)
-                await asyncio.sleep(max(0.05, duration))
-            finally:
-                self.client.send_message("/input/LookHorizontal", 0.0)
-                self.client.send_message("/input/LookLeft", 0)
-                self.client.send_message("/input/LookRight", 0)
+        """Turns smoothly left (negative speed) or right (positive speed) for `duration` seconds."""
+        s = float(max(-1.0, min(1.0, speed)))
+        if s == 0.0:
+            return
+        await self._ramp_axes([("/input/LookHorizontal", s)], duration)
 
     async def jump(self):
         """Taps the jump input."""

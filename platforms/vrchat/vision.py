@@ -210,18 +210,31 @@ def _get_yolo():
         if _YOLO_MODEL is None:
             from ultralytics import YOLO
             model = YOLO(str(_YOLO_WEIGHTS))
-            model.predict(np.zeros((216, 384, 3), dtype=np.uint8), classes=[0], conf=0.25, imgsz=384, verbose=False)
+            model.predict(
+                np.zeros((216, 384, 3), dtype=np.uint8),
+                classes=[0, 15, 16, 77],
+                conf=0.18,
+                imgsz=384,
+                verbose=False,
+            )
             _YOLO_MODEL = model
     return _YOLO_MODEL
 
 
 def detect_avatars_yolo(img: Image.Image) -> list[tuple[float, float, float, float, float]]:
     """
-    Runs local YOLOv8-nano person detection on `img` (~32 ms at 384px, 0 API tokens).
+    Runs local YOLOv8-nano avatar detection on `img` (~32 ms at 384px, 0 API tokens).
+    Includes COCO classes [0, 15, 16, 77] (person + stylized kemono/chibi avatars) at conf>=0.18.
     Returns bounding boxes [(x1, y1, x2, y2, conf), ...] sorted largest/closest first.
     """
     model = _get_yolo()
-    results = model.predict(np.asarray(img), classes=[0], conf=0.25, imgsz=384, verbose=False)
+    results = model.predict(
+        np.asarray(img),
+        classes=[0, 15, 16, 77],
+        conf=0.18,
+        imgsz=384,
+        verbose=False,
+    )
     boxes: list[tuple[float, float, float, float, float]] = []
     for res in results:
         if res.boxes is None:
