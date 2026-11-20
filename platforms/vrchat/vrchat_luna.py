@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import os
 import random
+import subprocess
 import sys
 import threading
 import time
@@ -37,9 +38,93 @@ from luna.brain import AIHandler  # noqa: E402
 from luna.core.intent import is_luna_mentioned  # noqa: E402
 from platforms.vrchat.osc import VRChatOSC, detect_movement_request  # noqa: E402
 from platforms.vrchat.vision import VRChatVision, capture_luna_vrchat_frame, is_facing_blank_wall, is_visual_question  # noqa: E402
-from platforms.vrchat.world_watcher import VRChatWorldState, watch_vrchat_logs  # noqa: E402
+from platforms.vrchat.world_watcher import VRChatWorldState, default_vrc_log_dir, watch_vrchat_logs  # noqa: E402
 
 HOST_NAME = os.getenv("VRCHAT_HOST_NAME", "Kai")
+
+
+def _find_vrc_dir() -> Path | None:
+    env_dir = os.getenv("VRC_INSTALL_PATH", "").strip()
+    candidates = [
+        Path(env_dir) if env_dir else None,
+        Path(r"D:\SteamLibrary\steamapps\common\VRChat"),
+        Path(r"C:\Program Files (x86)\Steam\steamapps\common\VRChat"),
+        Path(r"E:\SteamLibrary\steamapps\common\VRChat"),
+    ]
+    for c in candidates:
+        if c and (c / "launch.exe").exists():
+            return c
+    return None
+
+
+def _kill_other_luna_brains():
+    """Ensures only one vrchat_luna.py process runs at a time."""
+    if sys.platform != "win32":
+        return
+    my_pid = os.getpid()
+    cmd = (
+        f"Get-CimInstance Win32_Process -Filter \"Name LIKE 'python%'\" | "
+        f"Where-Object {{ $_.ProcessId -ne {my_pid} -and $_.CommandLine -match 'vrchat_luna' }} | "
+        f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
+    )
+    subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True)
+
+
+def _count_vrchat_processes() -> int:
+    if sys.platform != "win32":
+        return 0
+    res = subprocess.run(["tasklist", "/FI", "IMAGENAME eq VRChat.exe", "/NH"], capture_output=True, text=True)
+    return sum(1 for line in res.stdout.splitlines() if "vrchat.exe" in line.lower())
+
+
+def _newest_log_is_profile1() -> bool:
+    folder = default_vrc_log_dir()
+    if not folder.exists():
+        return False
+    logs = sorted(folder.glob("output_log_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not logs:
+        return False
+    try:
+        head = logs[0].read_text(encoding="utf-8", errors="ignore")[:12000]
+        return "Arg: --profile=1" in head
+    except OSError:
+        return False
+
+
+def ensure_both_vrchat_windows():
+    """
+    One-button launcher:
+      - If 0 VRChat windows are open -> launches YOUR main VRChat + LUNA's small VRChat.
+      - If 1 VRChat window is open   -> launches whichever one is missing (yours or Luna's).
+      - If 2+ VRChat windows are open -> does nothing (both already running).
+    """
+    vrc_dir = _find_vrc_dir()
+    if not vrc_dir:
+        return
+    launch_exe = str(vrc_dir / "launch.exe")
+    luna_args = [
+        launch_exe, "--profile=1", "--no-vr",
+        "-screen-width", "854", "-screen-height", "480", "-screen-fullscreen", "0",
+        "--fps=30", "--osc=9002:127.0.0.1:9003",
+    ]
+    main_args = [launch_exe, "--profile=0", "--no-vr"]
+
+    count = _count_vrchat_processes()
+    if count == 0:
+        print("[launcher] Opening YOUR Main VRChat window (Profile 0)...")
+        subprocess.Popen(main_args, cwd=str(vrc_dir))
+        time.sleep(4.0)
+        print("[launcher] Opening LUNA's Small VRChat window (Profile 1, OSC 9002)...")
+        subprocess.Popen(luna_args, cwd=str(vrc_dir))
+    elif count == 1:
+        if _newest_log_is_profile1():
+            print("[launcher] Luna's window is open — opening YOUR Main VRChat window (Profile 0)...")
+            subprocess.Popen(main_args, cwd=str(vrc_dir))
+        else:
+            print("[launcher] Your VRChat is open — opening LUNA's Small VRChat window (Profile 1, OSC 9002)...")
+            subprocess.Popen(luna_args, cwd=str(vrc_dir))
+    else:
+        print("[launcher] Both VRChat windows are already running!")
 
 AUTONOMOUS_THOUGHT_PROMPTS = [
     "Look at what your eyes currently see in front of you in VRChat and make a natural, witty comment about it.",
@@ -61,6 +146,7 @@ def parse_args():
     p.add_argument("--no-autonomy", action="store_true", help="Disable autonomous roaming and spontaneous thoughts")
     p.add_argument("--chill", action="store_true", help="Start in stay-put mode (subtle idle movement, no roaming)")
     p.add_argument("--think-every", type=int, default=38, help="Average seconds between autonomous thoughts (default: 38)")
+    p.add_argument("--no-launch", action="store_true", help="Do not auto-launch missing VRChat windows on startup")
     p.add_argument("--list-devices", action="store_true", help="Print audio device names and exit")
     return p.parse_args()
 
@@ -421,6 +507,9 @@ def main():
     if args.list_devices:
         list_devices()
         return
+    _kill_other_luna_brains()
+    if not getattr(args, "no_launch", False):
+        ensure_both_vrchat_windows()
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
