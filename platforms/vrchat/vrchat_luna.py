@@ -53,8 +53,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="Luna AI in VRChat — Autonomous Companion with Vision & Voice")
     p.add_argument("--host", type=str, default=None, help="VRChat OSC target IP (default: 127.0.0.1)")
     p.add_argument("--port", type=int, default=None, help="VRChat OSC target port (default: 9002 or VRCHAT_OSC_PORT)")
-    p.add_argument("--ptt", action="store_true", default=True, help="Hold VRChat OSC /input/Voice=1 while speaking (on by default)")
-    p.add_argument("--no-ptt", action="store_true", help="Do not send /input/Voice OSC push-to-talk")
+    p.add_argument("--ptt", action="store_true", default=False, help="Send /input/Voice OSC push-to-talk (only use if VRChat Toggle Voice is OFF)")
     p.add_argument("--listen", action="store_true", help="Listen on microphone (and optional world audio) via STT")
     p.add_argument("--wake-word", action="store_true", help="Only answer heard speech that mentions 'Luna'")
     p.add_argument("--no-voice", action="store_true", help="Chatbox only, no TTS audio")
@@ -205,12 +204,9 @@ class LunaInVRChat:
 
         self.speaking = True
         self.last_activity = time.time()
-        use_ptt = not getattr(self.args, "no_ptt", False) and os.getenv("VRCHAT_PTT", "true").lower() not in ("false", "0", "no")
+        use_ptt = getattr(self.args, "ptt", False) or os.getenv("VRCHAT_PTT", "false").lower() in ("true", "1", "yes")
         try:
             if use_ptt:
-                # Rising edge 0 -> 1 to key Push-To-Talk in VRChat
-                self.osc.client.send_message("/input/Voice", 0)
-                await asyncio.sleep(0.05)
                 self.osc.client.send_message("/input/Voice", 1)
             chat_task = asyncio.create_task(self.osc.say(reply))
             move_task = asyncio.create_task(self.osc.perform(chosen_action))
@@ -219,7 +215,6 @@ class LunaInVRChat:
             await asyncio.gather(chat_task, move_task, return_exceptions=True)
         finally:
             if use_ptt:
-                await asyncio.sleep(0.15)
                 self.osc.client.send_message("/input/Voice", 0)
             self.speaking = False
             self.last_activity = time.time()
