@@ -25,7 +25,11 @@ Thumbs.db
 # Temp files
 **/temp_audio.mp3
 **/temp_audio.wav
+**/temp_audio_*.mp3
+**/temp_audio_*.wav
 luna_memory.json
+platforms/vrchat/last_eye_view.jpg
+*.pt
 dist/
 build/
 

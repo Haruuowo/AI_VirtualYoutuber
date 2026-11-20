@@ -10,10 +10,12 @@ import io
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 
 import cv2
+import httpx
 import numpy as np
 from PIL import Image, ImageGrab
 
@@ -194,48 +196,104 @@ def is_facing_blank_wall(img: Image.Image) -> bool:
     return edge_ratio < 0.008 and std_val < 18.0
 
 
+_YOLO_MODEL = None
+_YOLO_LOCK = threading.Lock()
+_YOLO_WEIGHTS = Path(__file__).resolve().parents[2] / "yolov8n.pt"
+
+
+def _get_yolo():
+    """Lazy-loads and warms up YOLOv8-nano once so per-frame tracking runs in ~32 ms."""
+    global _YOLO_MODEL
+    if _YOLO_MODEL is not None:
+        return _YOLO_MODEL
+    with _YOLO_LOCK:
+        if _YOLO_MODEL is None:
+            from ultralytics import YOLO
+            model = YOLO(str(_YOLO_WEIGHTS))
+            model.predict(np.zeros((216, 384, 3), dtype=np.uint8), classes=[0], conf=0.25, imgsz=384, verbose=False)
+            _YOLO_MODEL = model
+    return _YOLO_MODEL
+
+
+def detect_avatars_yolo(img: Image.Image) -> list[tuple[float, float, float, float, float]]:
+    """
+    Runs local YOLOv8-nano person detection on `img` (~32 ms at 384px, 0 API tokens).
+    Returns bounding boxes [(x1, y1, x2, y2, conf), ...] sorted largest/closest first.
+    """
+    model = _get_yolo()
+    results = model.predict(np.asarray(img), classes=[0], conf=0.25, imgsz=384, verbose=False)
+    boxes: list[tuple[float, float, float, float, float]] = []
+    for res in results:
+        if res.boxes is None:
+            continue
+        for box in res.boxes:
+            x1, y1, x2, y2 = (float(v) for v in box.xyxy[0].tolist())
+            conf = float(box.conf[0].item()) if box.conf is not None else 0.5
+            boxes.append((x1, y1, x2, y2, conf))
+    boxes.sort(key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)
+    return boxes
+
+
+def track_target_person(img: Image.Image) -> tuple[bool, float, float]:
+    """
+    Finds the closest avatar/person in Luna's VRChat camera view using YOLOv8-nano.
+    Returns (found, offset, height_ratio):
+        found:        True only when an actual character/person is visible (never walls/posters!)
+        offset:       [-1.0 left .. 0.0 center .. +1.0 right]
+        height_ratio: fraction of frame height [0.0 .. 1.0] occupied by the avatar
+    """
+    try:
+        boxes = detect_avatars_yolo(img)
+    except Exception:
+        return (False, 0.0, 0.0)
+    if not boxes:
+        return (False, 0.0, 0.0)
+
+    w, h = img.size
+    x1, y1, x2, y2, _ = boxes[0]
+    cx = (x1 + x2) / 2.0
+    offset = (cx - (w / 2.0)) / (w / 2.0)
+    height_ratio = (y2 - y1) / float(h)
+    return (
+        True,
+        float(max(-1.0, min(1.0, offset))),
+        float(max(0.0, min(1.0, height_ratio))),
+    )
+
+
 def find_target_horizontal_offset(img: Image.Image) -> float:
-    """
-    Fast (<4 ms) OpenCV gaze-lock helper: finds the horizontal center of the most
-    prominent person/avatar figure in Luna's view.
-    Returns a normalized offset in [-1.0, 1.0]:
-        negative = target is to the LEFT of her crosshair
-        0.0      = target is DEAD CENTER (she is staring right at them)
-        positive = target is to the RIGHT of her crosshair
-    """
-    arr = np.asarray(img)
-    h, w, _ = arr.shape
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    """Backward-compatible wrapper around `track_target_person`."""
+    found, offset, _ = track_target_person(img)
+    return offset if found else 0.0
 
-    # Focus on the middle vertical band where player avatars stand (ignore ceiling & floor)
-    y0, y1 = int(h * 0.15), int(h * 0.85)
-    roi = gray[y0:y1, :]
-    edges = cv2.Canny(roi, 50, 150)
 
-    # Weight foreground vertical structures (avatars have high local edge & color contrast)
-    col_energy = edges.sum(axis=0).astype(np.float32)
-    total = float(col_energy.sum())
-    if total < 1000.0:
-        return 0.0
-
-    # Smooth column energy with a window ~18% of screen width (typical avatar width)
-    win = max(9, int(w * 0.18))
-    kernel = np.ones(win, dtype=np.float32) / float(win)
-    smoothed = np.convolve(col_energy, kernel, mode="same")
-    peak_x = float(np.argmax(smoothed))
-    # Map [0, w] -> [-1.0, +1.0]
-    offset = (peak_x - (w / 2.0)) / (w / 2.0)
-    return float(max(-1.0, min(1.0, offset)))
+def _parse_vision_json(raw: str) -> dict:
+    """Extracts `{"scene": ..., "steer": ...}` even if wrapped in markdown or <think> tags."""
+    cleaned = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.DOTALL).strip()
+    m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            return {
+                "scene": str(data.get("scene", "")).strip(),
+                "steer": str(data.get("steer", "look_around")).strip(),
+            }
+        except Exception:
+            pass
+    return {"scene": cleaned[:200], "steer": "look_around"}
 
 
 class VRChatVision:
     """
     Gives Luna real-time visual perception of her VRChat window.
-    Includes a <15ms zero-token Local OpenCV visual analyzer so she can ALWAYS see,
-    track avatars, and avoid walls with 0 lag even when cloud vision tokens run out.
+    Uses Gemini 2.5 Flash Vision (when GEMINI_API_KEY is set) or Groq qwen3.8-27b,
+    with an automatic <20 ms zero-token local YOLOv8-nano fallback so she always
+    tracks real characters without locking onto walls or burning cloud tokens.
     """
 
     def __init__(self):
+        self.gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+        self.gemini_model = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash").strip()
         self.api_key = os.getenv("GROQ_API_KEY", "").strip()
         self.model = os.getenv("VISION_MODEL", "qwen/qwen3.8-27b").strip()
         self.last_scene: str = ""
@@ -265,8 +323,8 @@ class VRChatVision:
 
     def _analyze_local_opencv(self, img: Image.Image) -> dict:
         """
-        Instant (<15ms, 0 API tokens) OpenCV scene & avatar analyzer.
-        Detects faces/bodies, left/center/right visual activity, wall blockage, and room color palette.
+        Instant (~15 ms, 0 API tokens) YOLOv8-nano character detector + OpenCV room analyzer.
+        Detects real avatars, counts them, gauges distance, and chooses non-twitchy steering.
         """
         arr = np.asarray(img)
         h, w, _ = arr.shape
@@ -274,28 +332,54 @@ class VRChatVision:
         palette = self._describe_palette(arr)
 
         if is_facing_blank_wall(img):
-            # Pick whichever side has more visual detail (open room)
             edges = cv2.Canny(gray, 50, 150)
             left_e = np.count_nonzero(edges[:, : w // 2])
             right_e = np.count_nonzero(edges[:, w // 2 :])
             steer = "turn_left" if left_e > right_e else "turn_right"
             return {"scene": f"Close to a flat wall in a {palette} room; turning toward open space.", "steer": steer}
 
-        # 1. Check for character figures using OpenCV's built-in HOG People Detector (no external XML files needed)
-        rects, _ = self._hog.detectMultiScale(gray, winStride=(8, 8), padding=(16, 16), scale=1.08)
-        if len(rects) > 0:
-            x, y, bw, bh = max(rects, key=lambda rect: rect[2] * rect[3])
-            cx = (x + bw / 2.0) / float(w)
-            size_ratio = (bw * bh) / float(w * h)
-            if cx < 0.36:
-                return {"scene": f"I see an avatar on the left side of my view in this {palette} space.", "steer": "turn_left"}
-            if cx > 0.64:
-                return {"scene": f"I see an avatar on the right side of my view in this {palette} space.", "steer": "turn_right"}
-            if size_ratio > 0.22:
-                return {"scene": f"An avatar is standing right in front of me up close in this {palette} room.", "steer": "look_around"}
-            return {"scene": f"I see an avatar ahead in the center of this {palette} room.", "steer": "curious_approach"}
+        # 1. Prefer YOLOv8-nano real humanoid detection (only fall back to HOG if ultralytics import fails)
+        yolo_boxes = None
+        try:
+            yolo_boxes = detect_avatars_yolo(img)
+        except Exception:
+            yolo_boxes = None
 
-        # 2. Saliency / Edge distribution across left, center, right thirds
+        if yolo_boxes is not None:
+            if yolo_boxes:
+                x1, y1, x2, y2, _ = yolo_boxes[0]
+                cx = ((x1 + x2) / 2.0 - (w / 2.0)) / (w / 2.0)
+                height_ratio = (y2 - y1) / float(h)
+                count = len(yolo_boxes)
+                who = "1 avatar" if count == 1 else f"{count} avatars"
+
+                if cx < -0.20:
+                    pos, steer = "on the left side of my view", "turn_left"
+                elif cx > 0.20:
+                    pos, steer = "on the right side of my view", "turn_right"
+                elif height_ratio < 0.25:
+                    pos, steer = "ahead across the room", "curious_approach"
+                elif height_ratio > 0.78:
+                    pos, steer = "right up close in front of me", "step_back"
+                else:
+                    pos, steer = "right in front of me at conversational distance", "stay"
+
+                return {"scene": f"I see {who}, closest is {pos} in this {palette} room.", "steer": steer}
+        else:
+            rects, _ = self._hog.detectMultiScale(gray, winStride=(8, 8), padding=(16, 16), scale=1.08)
+            if len(rects) > 0:
+                x, y, bw, bh = max(rects, key=lambda rect: rect[2] * rect[3])
+                cx = (x + bw / 2.0) / float(w)
+                size_ratio = (bw * bh) / float(w * h)
+                if cx < 0.36:
+                    return {"scene": f"I see an avatar on the left side of my view in this {palette} space.", "steer": "turn_left"}
+                if cx > 0.64:
+                    return {"scene": f"I see an avatar on the right side of my view in this {palette} space.", "steer": "turn_right"}
+                if size_ratio > 0.22:
+                    return {"scene": f"An avatar is standing right in front of me up close in this {palette} room.", "steer": "stay"}
+                return {"scene": f"I see an avatar ahead in the center of this {palette} room.", "steer": "curious_approach"}
+
+        # 2. Open room context when no avatar is visible in frame
         edges = cv2.Canny(gray[int(h * 0.15) : int(h * 0.85), :], 45, 140)
         third = w // 3
         e_left = int(np.count_nonzero(edges[:, :third]))
@@ -305,9 +389,9 @@ class VRChatVision:
         if e_mid >= e_left and e_mid >= e_right and e_mid > 350:
             return {"scene": f"Looking across an open {palette} VRChat room with details straight ahead.", "steer": "wander_step"}
         if e_left > e_right * 1.35:
-            return {"scene": f"Open {palette} room with more activity and detail to my left.", "steer": "turn_left"}
+            return {"scene": f"Open {palette} room with more detail to my left.", "steer": "turn_left"}
         if e_right > e_left * 1.35:
-            return {"scene": f"Open {palette} room with more activity and detail to my right.", "steer": "turn_right"}
+            return {"scene": f"Open {palette} room with more detail to my right.", "steer": "turn_right"}
         return {"scene": f"Standing in a {palette} VRChat area with open space around me.", "steer": "wander_step"}
 
     @staticmethod
@@ -316,35 +400,54 @@ class VRChatVision:
         img.save(buf, format="JPEG", quality=quality)
         return base64.b64encode(buf.getvalue()).decode("ascii")
 
-    def _call_vision_sync(self, img: Image.Image, question: str | None = None) -> dict:
-        if not self.api_key:
-            return {"scene": "", "steer": "look_around"}
-
-        from groq import Groq
-        client = Groq(api_key=self.api_key)
-        b64 = self._encode_jpeg_b64(img)
-
+    @staticmethod
+    def _build_vision_prompt(question: str | None) -> str:
         if question:
-            prompt = (
+            return (
                 f"You are Luna's eyes inside VRChat (first-person view). The user asked: \"{question}\"\n"
                 "Describe specifically what you see in this VRChat screenshot (any player avatars, their hair/clothes/colors, "
                 "nametags, mirrors, signs, furniture, lighting, or walls), and pick a movement from: "
                 "[turn_left, turn_right, curious_approach, step_back, wander_step, look_around, stay].\n"
                 "Return ONLY valid JSON: {\"scene\": \"...\", \"steer\": \"...\"}"
             )
-        else:
-            prompt = (
-                "You are Luna's eyes inside VRChat (first-person game view). "
-                "1) In 1 specific sentence, describe what is visible in front of you (any avatars and where they are on screen: left/center/right/close + what they look like, or the room/mirror/wall ahead). "
-                "2) Pick ONE movement from [turn_left, turn_right, curious_approach, step_back, wander_step, look_around]: "
-                "- If facing a close wall, corner, or obstacle -> turn_left or turn_right\n"
-                "- If an avatar/person is on the left side of the screen -> turn_left\n"
-                "- If an avatar/person is on the right side of the screen -> turn_right\n"
-                "- If an avatar/person is near the center at medium distance -> curious_approach\n"
-                "- If an avatar/person is very close in front of you -> look_around\n"
-                "- If open room with no one visible -> wander_step or look_around\n"
-                "Return ONLY valid JSON: {\"scene\": \"...\", \"steer\": \"...\"}"
-            )
+        return (
+            "You are Luna's eyes inside VRChat (first-person game view). "
+            "1) In 1 specific sentence, describe what is visible in front of you (any avatars and where they are on screen: left/center/right/close + what they look like, or the room/mirror/wall ahead). "
+            "2) Pick ONE movement from [turn_left, turn_right, curious_approach, step_back, wander_step, look_around, stay]: "
+            "- If facing a close wall, corner, or obstacle -> turn_left or turn_right\n"
+            "- If an avatar/person is on the left side of the screen -> turn_left\n"
+            "- If an avatar/person is on the right side of the screen -> turn_right\n"
+            "- If an avatar/person is near the center at medium distance -> curious_approach\n"
+            "- If an avatar/person is already centered close in front of you -> stay\n"
+            "- If open room with no one visible -> wander_step or look_around\n"
+            "Return ONLY valid JSON: {\"scene\": \"...\", \"steer\": \"...\"}"
+        )
+
+    def _call_gemini_vision_sync(self, b64: str, prompt: str) -> dict:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent?key={self.gemini_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/jpeg", "data": b64}}]}],
+            "generationConfig": {"temperature": 0.25, "maxOutputTokens": 180},
+        }
+        r = httpx.post(url, json=payload, timeout=10.0)
+        r.raise_for_status()
+        data = r.json()
+        raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        return _parse_vision_json(raw)
+
+    def _call_vision_sync(self, img: Image.Image, question: str | None = None) -> dict:
+        b64 = self._encode_jpeg_b64(img)
+        prompt = self._build_vision_prompt(question)
+
+        # Prefer Gemini 2.5 Flash when GEMINI_API_KEY is configured (1,500 free looks/day)
+        if self.gemini_key:
+            return self._call_gemini_vision_sync(b64, prompt)
+
+        if not self.api_key:
+            return self._analyze_local_opencv(img)
+
+        from groq import Groq
+        client = Groq(api_key=self.api_key)
 
         # IMPORTANT: reasoning_effort='none' prevents qwen3.8-27b from exhausting max_tokens inside <think> tags!
         resp = None
@@ -372,24 +475,12 @@ class VRChatVision:
                     continue
                 raise
         raw = (resp.choices[0].message.content or "").strip()
-        # Strip any <think>...</think> block if present
-        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            try:
-                data = json.loads(m.group(0))
-                return {
-                    "scene": str(data.get("scene", "")).strip(),
-                    "steer": str(data.get("steer", "look_around")).strip(),
-                }
-            except Exception:
-                pass
-        return {"scene": raw[:200], "steer": "look_around"}
+        return _parse_vision_json(raw)
 
     async def look(self, question: str | None = None) -> dict:
         """
         Captures Luna's VRChat window and analyzes what she sees.
-        Uses fast local OpenCV (<15ms, 0 tokens) immediately if cloud vision is on rate-limit cooldown.
+        Uses fast local YOLOv8-nano (<20 ms, 0 tokens) immediately if cloud vision is on cooldown.
         """
         img = await asyncio.to_thread(capture_luna_vrchat_frame)
         if img is None:
@@ -397,7 +488,6 @@ class VRChatVision:
 
         wall = await asyncio.to_thread(is_facing_blank_wall, img)
 
-        # If cloud vision tokens are exhausted / on cooldown, use instant local OpenCV vision (0 lag!)
         if time.time() < self._cloud_cooldown_until:
             res = await asyncio.to_thread(self._analyze_local_opencv, img)
         else:
@@ -405,11 +495,12 @@ class VRChatVision:
                 res = await asyncio.to_thread(self._call_vision_sync, img, question)
             except Exception as e:
                 err_s = str(e)
-                if "429" in err_s or "rate_limit" in err_s:
-                    # Stop hammering cloud vision while out of tokens; switch to instant local OpenCV eyes!
-                    cooldown = 900.0 if "TPD" in err_s or "tokens per day" in err_s else 35.0
+                if "429" in err_s or "rate_limit" in err_s or "RESOURCE_EXHAUSTED" in err_s:
+                    cooldown = 900.0 if ("TPD" in err_s or "tokens per day" in err_s) else 35.0
                     self._cloud_cooldown_until = time.time() + cooldown
-                    print(f"[eyes] Cloud vision quota reached — switched to instant Local OpenCV Eyes (0ms lag)!")
+                    print("[eyes] Cloud vision quota reached — switched to Local YOLOv8 Eyes (0ms lag)!")
+                else:
+                    print(f"[vision] {e}")
                 res = await asyncio.to_thread(self._analyze_local_opencv, img)
 
         steer = res.get("steer", "look_around")

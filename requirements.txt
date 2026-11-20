@@ -13,3 +13,4 @@ customtkinter
 fastapi
 uvicorn
 python-osc
+ultralytics

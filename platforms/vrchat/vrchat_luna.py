@@ -40,9 +40,9 @@ from platforms.vrchat.osc import VRChatOSC, detect_movement_request  # noqa: E40
 from platforms.vrchat.vision import (  # noqa: E402
     VRChatVision,
     capture_luna_vrchat_frame,
-    find_target_horizontal_offset,
     is_facing_blank_wall,
     is_visual_question,
+    track_target_person,
 )
 from platforms.vrchat.world_watcher import VRChatWorldState, default_vrc_log_dir, watch_vrchat_logs  # noqa: E402
 
@@ -299,14 +299,30 @@ class LunaInVRChat:
             self.speaking = False
             self.last_activity = time.time()
 
-    async def _stare_at_speaker(self):
-        """Captures a quick frame (<5ms OpenCV) and turns Luna to stare directly at the person in front of her."""
+    async def _stare_at_speaker(self, allow_approach: bool = False) -> bool:
+        """
+        Uses local YOLOv8-nano (<20ms, 0 API tokens) to spot an actual avatar in view
+        and turn Luna cleanly toward them. Never locks onto walls or posters!
+        """
         frame = await asyncio.to_thread(capture_luna_vrchat_frame)
-        if frame is not None:
-            offset = await asyncio.to_thread(find_target_horizontal_offset, frame)
+        if frame is None:
+            self.osc.apply_cutesy_smug_face(blush=0.4, happy=True)
+            return False
+
+        found, offset, height_ratio = await asyncio.to_thread(track_target_person, frame)
+        if not found:
+            self.osc.apply_cutesy_smug_face(blush=0.4, happy=True)
+            return False
+
+        if abs(offset) > 0.20:
             await self.osc.lock_gaze_on_offset(offset)
         else:
             self.osc.apply_cutesy_smug_face(blush=0.45, happy=True)
+
+        if allow_approach and height_ratio < 0.24 and abs(offset) <= 0.30:
+            await self.osc.move(vertical=0.7, duration=0.75)
+
+        return True
 
     async def respond(self, user: str, text: str):
         self.last_activity = time.time()
@@ -315,11 +331,11 @@ class LunaInVRChat:
             self.world.set_behavior(mode_change, requested_action or mode_change)
             print(f"[autonomy] behavior mode -> {mode_change.upper()}")
 
-        # Immediately turn and lock her eyes onto you while thinking of her reply!
-        stare_task = asyncio.create_task(self._stare_at_speaker())
+        # Turn toward visible avatar while thinking of her reply (no wall staring!)
+        stare_task = asyncio.create_task(self._stare_at_speaker(allow_approach=False))
 
         # Only call cloud vision when you ask a visual question ("what do you see?", "look at my avatar")
-        # or if she hasn't looked in 45s — saves 90% of vision tokens and keeps replies fast (<0.8s)!
+        # or if she hasn't looked in 45s — saves vision tokens and keeps replies fast (<0.8s)!
         vision_steer = None
         if self.vision and (is_visual_question(text) or time.time() - self.vision.last_seen_ts > 45.0):
             obs = await self.vision.look(question=text if is_visual_question(text) else None)
@@ -336,16 +352,16 @@ class LunaInVRChat:
 
         await self._speak_and_move(reply, action=requested_action or vision_steer, tag="luna")
 
-    # ── Autonomous Body Loop (Cutesy-Smug Idle & Gaze Lock) ────────────────
+    # ── Autonomous Body Loop (Cutesy-Smug Idle & YOLO Avatar Tracking) ─────
 
     async def body_loop(self):
         """
-        Keeps Luna's avatar feeling like a real player with a cutesy-smug idle presence:
-          - While you are actively talking with her (last 60s), she STAYS FACING YOU,
-            locks her gaze on you, and plays her cutesy-smug idle animations (blush,
-            half-lidded smug smile, slow blinks, subtle hip sway, occasional wave).
-          - Only when things have been quiet for 60+ seconds in ROAM mode does she
-            casually stroll a step or glance around.
+        Keeps Luna's avatar standing smoothly in her native Unity idle animation:
+          - Never performs random horizontal twitching.
+          - When talking or when YOLO sees someone on screen, locks onto them and
+            plays stationary facial/eye expressions (`cutesy_idle` / `stare_smug`).
+          - Only walks or turns away from walls when quiet for 60+ seconds AND no person
+            is visible in her camera view.
         """
         self.osc.apply_cutesy_smug_face(blush=0.4, happy=True, sleepy_smug=True)
         while True:
@@ -357,17 +373,20 @@ class LunaInVRChat:
             recently_talking = (time.time() - self.last_activity) < 60.0
 
             if mode == "chill" or recently_talking:
-                # Re-center her stare on you and run her cutesy-smug idle expression
-                await self._stare_at_speaker()
-                action = random.choices(["cutesy_idle", "stare_smug", "wave"], weights=[58, 32, 10], k=1)[0]
+                await self._stare_at_speaker(allow_approach=True)
+                action = random.choices(["cutesy_idle", "stare_smug", "wave"], weights=[60, 32, 8], k=1)[0]
             else:
-                frame = await asyncio.to_thread(capture_luna_vrchat_frame)
-                if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
-                    action = random.choice(["turn_left", "turn_right"])
-                    print(f"[eyes] wall ahead (OpenCV) -> {action}")
+                found = await self._stare_at_speaker(allow_approach=True)
+                if found:
+                    # She sees someone right now — stay locked on them instead of wandering into a wall!
+                    action = random.choices(["cutesy_idle", "stare_smug"], weights=[65, 35], k=1)[0]
                 else:
-                    await self._stare_at_speaker()
-                    action = random.choices(["cutesy_idle", "stare_smug", "wander_step"], weights=[45, 25, 30], k=1)[0]
+                    frame = await asyncio.to_thread(capture_luna_vrchat_frame)
+                    if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
+                        action = random.choice(["turn_left", "turn_right"])
+                        print(f"[eyes] wall ahead (OpenCV) -> {action}")
+                    else:
+                        action = random.choices(["wander_step", "look_around"], weights=[55, 45], k=1)[0]
 
             self.world.record_action(action)
             try:
@@ -463,7 +482,11 @@ class LunaInVRChat:
         print("        LUNA AI VTUBER - AUTONOMOUS VRCHAT COMPANION")
         print("=" * 64)
         print(f"  Brain     : {self.ai.provider} / {self.ai.model}")
-        print(f"  Eyes      : {'ON (' + self.vision.model + ' + OpenCV wall/avatar tracking)' if self.vision else 'OFF'}")
+        eyes_desc = "OFF"
+        if self.vision:
+            cloud_v = f"Gemini {self.vision.gemini_model}" if self.vision.gemini_key else self.vision.model
+            eyes_desc = f"ON ({cloud_v} + YOLOv8-nano avatar tracking)"
+        print(f"  Eyes      : {eyes_desc}")
         print(f"  VRChat    : world='{snap['world']}' | players={snap['players'] or ['(solo)']}")
         print(f"  OSC       : {self.osc.host}:{self.osc.port}  (chatbox + /input/* locomotion)")
         print(f"  Autonomy  : {'ON (' + snap['mode'].upper() + ' mode)' if self.autonomy_enabled else 'OFF (manual)'}")

@@ -140,6 +140,9 @@ class VRChatOSC:
         self.set_param("Happy", bool(happy))
         self.set_param("Blush", float(max(0.0, min(1.0, blush))))
         self.set_param("Sleepy", bool(sleepy_smug))
+        # Colibri Blind expression modifier & standard Emotion slot
+        self.set_param("ExpModL", bool(happy))
+        self.set_param("Emotion", 1 if happy else 0)
         # Blendtree facial expression support (for avatars using VRCFaceBlendH/V)
         self.set_param("VRCFaceBlendH", 0.55 if happy else 0.0)
         self.set_param("VRCFaceBlendV", 0.35)
@@ -152,9 +155,9 @@ class VRChatOSC:
         """
         self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=False)
         self.set_eyes(pitch=-2.0, yaw=float(offset * 12.0), closed=0.14)
-        if abs(offset) > 0.14:
+        if abs(offset) > 0.20:
             speed = 0.45 if offset > 0 else -0.45
-            dur = min(0.55, max(0.12, abs(offset) * 0.48))
+            dur = min(0.45, max(0.10, abs(offset) * 0.38))
             await self.turn(speed=speed, duration=dur)
         self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.15)
 
@@ -217,13 +220,12 @@ class VRChatOSC:
             await asyncio.sleep(0.6)
 
         elif action == "cutesy_idle":
-            # Natural cutesy-smug idle animation: smug side-glance + slow blink + subtle hip sway
+            # Natural cutesy-smug idle animation: pure facial/eye animation (no body strafe twitching!)
+            # so her avatar's built-in Unity breathing/idle animation plays smoothly.
             self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=random.choice([True, False]))
             glance = random.choice([-10.0, 10.0, 0.0])
             self.set_eyes(pitch=-2.0, yaw=glance, closed=0.22)
-            side = random.choice([-0.32, 0.32])
-            await self.move(horizontal=side, duration=0.22)
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(0.30)
             # Slow cute blink then return eyes to center stare
             self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.85)
             await asyncio.sleep(0.14)
