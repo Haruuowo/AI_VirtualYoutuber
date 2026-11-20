@@ -1,21 +1,6 @@
 """
 Luna's Eyes in VRChat — Real-Time Window Capture, Vision LLM Scene Understanding,
 and Visual Target Tracking / Wall Avoidance.
-
-How it works:
-  1. Finds Luna's VRChat window handle (HWND) on Windows. When two VRChat
-     windows are open (your main window + Luna's 854x480 Profile 1 window),
-     it automatically picks the smaller window belonging to Luna.
-  2. Captures the window using Win32 `PrintWindow(..., PW_RENDERFULLCONTENT)`
-     so Luna can STILL see through her window even when your main VRChat window
-     is covering it! (Falls back to `PIL.ImageGrab.grab` if needed.)
-  3. Sends a compact 640x360 JPEG frame to `qwen/qwen3.8-27b` (multimodal vision)
-     to get both:
-       * A concise description of what is in front of her (avatars, mirrors,
-         room details, text/signs)
-       * A visual steering decision (`turn_left`, `turn_right`, `approach`,
-         `unstick_wall`, or `stay`) so she avoids walking into walls and can
-         visually turn/walk toward people she sees!
 """
 import asyncio
 import base64
@@ -26,6 +11,7 @@ import json
 import os
 import re
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -36,10 +22,43 @@ gdi32 = ctypes.windll.gdi32
 PW_RENDERFULLCONTENT = 0x00000002
 BI_RGB = 0
 
+# Explicit 64-bit Win32 handle types so pointers > 32-bit never truncate
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.IsWindowVisible.restype = wintypes.BOOL
+user32.IsIconic.argtypes = [wintypes.HWND]
+user32.IsIconic.restype = wintypes.BOOL
+user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+user32.GetWindowTextLengthW.restype = ctypes.c_int
+user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetWindowTextW.restype = ctypes.c_int
+user32.GetWindowDC.argtypes = [wintypes.HWND]
+user32.GetWindowDC.restype = wintypes.HDC
+user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+user32.ReleaseDC.restype = ctypes.c_int
+user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+user32.PrintWindow.restype = wintypes.BOOL
+
+gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+gdi32.CreateCompatibleDC.restype = wintypes.HDC
+gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+gdi32.SelectObject.restype = wintypes.HGDIOBJ
+gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+gdi32.DeleteObject.restype = wintypes.BOOL
+gdi32.DeleteDC.argtypes = [wintypes.HDC]
+gdi32.DeleteDC.restype = wintypes.BOOL
+
+DEBUG_FRAME_PATH = Path(__file__).resolve().parent / "last_eye_view.jpg"
+
 
 class RECT(ctypes.Structure):
     _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
                 ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+user32.GetWindowRect.restype = wintypes.BOOL
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -51,28 +70,36 @@ class BITMAPINFOHEADER(ctypes.Structure):
     ]
 
 
+gdi32.GetDIBits.argtypes = [
+    wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
+    ctypes.c_void_p, ctypes.POINTER(BITMAPINFOHEADER), wintypes.UINT,
+]
+gdi32.GetDIBits.restype = ctypes.c_int
+
+
 def find_vrchat_windows() -> list[tuple[int, tuple[int, int, int, int], int]]:
     """
-    Returns all visible VRChat windows as [(hwnd, (l, t, r, b), area), ...],
+    Returns all visible non-minimized VRChat windows as [(hwnd, (l, t, r, b), area), ...],
     sorted from smallest area (Luna's 854x480 window) to largest (main window).
     """
     found = []
 
     @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
     def enum_cb(hwnd, _lparam):
-        if not user32.IsWindowVisible(hwnd):
+        if not hwnd or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
             return True
         length = user32.GetWindowTextLengthW(hwnd)
         if length <= 0:
             return True
         buf = ctypes.create_unicode_buffer(length + 1)
         user32.GetWindowTextW(hwnd, buf, length + 1)
-        if "vrchat" in buf.value.strip().lower():
+        title = buf.value.strip()
+        if title.lower() == "vrchat":
             rc = RECT()
             if user32.GetWindowRect(hwnd, ctypes.byref(rc)):
                 w = max(0, rc.right - rc.left)
                 h = max(0, rc.bottom - rc.top)
-                if w > 100 and h > 100:
+                if w > 200 and h > 200:
                     found.append((int(hwnd), (rc.left, rc.top, rc.right, rc.bottom), w * h))
         return True
 
@@ -106,8 +133,7 @@ def _capture_hwnd_printwindow(hwnd: int, width: int, height: int) -> Image.Image
             return None
         arr = np.frombuffer(buf, dtype=np.uint8).reshape((height, width, 4))
         rgb = arr[:, :, [2, 1, 0]]  # BGRA -> RGB
-        # Verify it's not an all-black unrendered surface
-        if float(rgb.mean()) < 2.0:
+        if float(rgb.std()) < 4.0:
             return None
         return Image.fromarray(rgb, "RGB")
     finally:
@@ -119,15 +145,18 @@ def _capture_hwnd_printwindow(hwnd: int, width: int, height: int) -> Image.Image
 
 def capture_luna_vrchat_frame(max_w: int = 640, max_h: int = 360) -> Image.Image | None:
     """
-    Captures Luna's VRChat window (prefers the smaller VRChat window when two are open)
-    and resizes it to `max_w x max_h`.
+    Captures Luna's VRChat window (prefers the smaller VRChat window when two are open),
+    saves a debug copy to `platforms/vrchat/last_eye_view.jpg`, and returns the PIL Image.
     """
     wins = find_vrchat_windows()
     img = None
     if wins:
         hwnd, (l, t, r, b), _ = wins[0]
         w, h = r - l, b - t
-        img = _capture_hwnd_printwindow(hwnd, w, h)
+        try:
+            img = _capture_hwnd_printwindow(hwnd, w, h)
+        except Exception:
+            img = None
         if img is None:
             try:
                 img = ImageGrab.grab(bbox=(l, t, r, b))
@@ -138,14 +167,17 @@ def capture_luna_vrchat_frame(max_w: int = 640, max_h: int = 360) -> Image.Image
             img = ImageGrab.grab()
         except Exception:
             return None
-    return img.resize((max_w, max_h), Image.Resampling.BILINEAR)
+
+    resized = img.resize((max_w, max_h), Image.Resampling.BILINEAR)
+    try:
+        resized.save(DEBUG_FRAME_PATH, format="JPEG", quality=80)
+    except Exception:
+        pass
+    return resized
 
 
 def is_facing_blank_wall(img: Image.Image) -> bool:
-    """
-    Fast OpenCV heuristic (<2 ms): checks if the center of Luna's view has very
-    low edge density / texture variance (e.g. nose pressed against a flat wall).
-    """
+    """Fast OpenCV heuristic (<2 ms): checks if the center of Luna's view is a flat wall."""
     arr = np.asarray(img)
     h, w, _ = arr.shape
     crop = arr[int(h * 0.2):int(h * 0.8), int(w * 0.25):int(w * 0.75)]
@@ -182,31 +214,32 @@ class VRChatVision:
 
         if question:
             prompt = (
-                f"You are Luna's eyes inside VRChat. The user asked: \"{question}\"\n"
-                "Describe clearly and concisely (in 1-2 short sentences) what you see in this VRChat view "
-                "(any avatars, their appearance/outfits, the room/environment, mirrors, signs, or objects), "
-                "and also decide the best movement action from: "
+                f"You are Luna's eyes inside VRChat (first-person view). The user asked: \"{question}\"\n"
+                "Describe specifically what you see in this VRChat screenshot (any player avatars, their hair/clothes/colors, "
+                "nametags, mirrors, signs, furniture, lighting, or walls), and pick a movement from: "
                 "[turn_left, turn_right, curious_approach, step_back, wander_step, look_around, stay].\n"
-                "Respond in JSON: {\"scene\": \"...\", \"steer\": \"...\"}"
+                "Return ONLY valid JSON: {\"scene\": \"...\", \"steer\": \"...\"}"
             )
         else:
             prompt = (
-                "You are Luna's eyes inside VRChat (first-person view). "
-                "1) In 1 short sentence, describe what is directly in front of you (any player avatars and where they are on screen: left/center/right/close, or if you are facing a wall/corner/mirror/open room). "
-                "2) Pick ONE physical movement from [turn_left, turn_right, curious_approach, step_back, wander_step, look_around]: "
-                "- If facing a close wall, door frame, or obstacle -> turn_left or turn_right\n"
-                "- If a person/avatar is visible on the left -> turn_left\n"
-                "- If a person/avatar is visible on the right -> turn_right\n"
-                "- If a person/avatar is centered at medium distance -> curious_approach\n"
-                "- If a person/avatar is right in your face (very close) -> step_back or look_around\n"
-                "- If open space -> wander_step\n"
-                "Respond ONLY with valid JSON: {\"scene\": \"...\", \"steer\": \"...\"}"
+                "You are Luna's eyes inside VRChat (first-person game view). "
+                "1) In 1 specific sentence, describe what is visible in front of you (any avatars and where they are on screen: left/center/right/close + what they look like, or the room/mirror/wall ahead). "
+                "2) Pick ONE movement from [turn_left, turn_right, curious_approach, step_back, wander_step, look_around]: "
+                "- If facing a close wall, corner, or obstacle -> turn_left or turn_right\n"
+                "- If an avatar/person is on the left side of the screen -> turn_left\n"
+                "- If an avatar/person is on the right side of the screen -> turn_right\n"
+                "- If an avatar/person is near the center at medium distance -> curious_approach\n"
+                "- If an avatar/person is very close in front of you -> look_around\n"
+                "- If open room with no one visible -> wander_step or look_around\n"
+                "Return ONLY valid JSON: {\"scene\": \"...\", \"steer\": \"...\"}"
             )
 
+        # IMPORTANT: reasoning_effort='none' prevents qwen3.8-27b from exhausting max_tokens inside <think> tags!
         resp = client.chat.completions.create(
             model=self.model,
-            max_tokens=110,
-            temperature=0.3,
+            max_tokens=160,
+            temperature=0.25,
+            reasoning_effort="none",
             messages=[
                 {
                     "role": "user",
@@ -218,7 +251,8 @@ class VRChatVision:
             ],
         )
         raw = (resp.choices[0].message.content or "").strip()
-        # Extract JSON block even if wrapped in markdown
+        # Strip any <think>...</think> block if present
+        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if m:
             try:
@@ -229,11 +263,11 @@ class VRChatVision:
                 }
             except Exception:
                 pass
-        return {"scene": raw[:180], "steer": "look_around"}
+        return {"scene": raw[:200], "steer": "look_around"}
 
     async def look(self, question: str | None = None) -> dict:
         """
-        Captures Luna's VRChat window and analyzes what she sees.
+        Captures Luna's VRChat window and analyzes what she sees in ~0.6s.
         Returns {'scene': str, 'steer': str, 'wall': bool}.
         """
         img = await asyncio.to_thread(capture_luna_vrchat_frame)
@@ -268,7 +302,7 @@ def is_visual_question(text: str) -> bool:
         re.search(
             r"\b(what do you see|look at|can you see|see me|my avatar|what am i wearing|"
             r"how do i look|rate my avatar|what is in front|where am i|follow me|come to me|"
-            r"look here|watch this|in the mirror|what color)\b",
+            r"look here|watch this|in the mirror|what color|describe|around you)\b",
             low,
         )
     )

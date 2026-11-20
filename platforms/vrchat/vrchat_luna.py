@@ -297,10 +297,9 @@ class LunaInVRChat:
             self.world.set_behavior(mode_change, requested_action or mode_change)
             print(f"[autonomy] behavior mode -> {mode_change.upper()}")
 
-        # If the user asked something visual ("what do you see?", "look at my avatar", "follow me")
-        # or if her visual memory is older than 20s, take a fresh look through her eyes first!
+        # Always take a fresh look through her eyes before answering so she sees what's in front of her!
         vision_steer = None
-        if self.vision and (is_visual_question(text) or time.time() - self.vision.last_seen_ts > 20.0):
+        if self.vision and (is_visual_question(text) or time.time() - self.vision.last_seen_ts > 8.0):
             obs = await self.vision.look(question=text if is_visual_question(text) else None)
             if obs["scene"]:
                 self.world.set_visual_scene(obs["scene"])
@@ -316,37 +315,23 @@ class LunaInVRChat:
     # ── Autonomous Body Loop (Vision-Guided Roaming & Wall Avoidance) ──────
 
     async def body_loop(self):
-        """Keeps Luna's avatar physically alive—using her eyes to avoid walls and approach people."""
-        step_count = 0
+        """Keeps Luna's avatar physically alive—using her eyes on every step to steer toward people and avoid walls."""
         while True:
-            await asyncio.sleep(random.uniform(6.5, 12.5))
+            await asyncio.sleep(random.uniform(7.0, 12.0))
             if not self.autonomy_enabled or self.speaking:
                 continue
 
-            step_count += 1
             mode = self.world.snapshot()["mode"]
             if mode == "roam":
                 action = None
-                # Every 3rd roam tick, use full Vision LLM to steer toward people / interesting spots
-                if self.vision and step_count % 3 == 0:
+                if self.vision:
                     obs = await self.vision.look()
                     if obs["scene"]:
                         self.world.set_visual_scene(obs["scene"])
                         print(f"[eyes] {obs['scene']} -> {obs['steer']}")
                     action = obs["steer"]
-                else:
-                    # Fast OpenCV check (<2ms) so she never walks into a blank wall between vision ticks
-                    frame = await asyncio.to_thread(capture_luna_vrchat_frame)
-                    if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
-                        action = random.choice(["turn_left", "turn_right"])
-                        print(f"[eyes] wall detected ahead -> {action}")
-
                 if not action or action == "stay":
-                    action = random.choices(
-                        ["wander_step", "look_around", "curious_approach", "shift_weight", "jump"],
-                        weights=[40, 25, 15, 13, 7],
-                        k=1,
-                    )[0]
+                    action = "look_around"
             else:
                 action = random.choice(["look_around", "shift_weight"])
 

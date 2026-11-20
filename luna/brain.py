@@ -99,12 +99,15 @@ class AIHandler:
                 raise
         else:
             try:
-                response = self.client.chat.completions.create(
+                kwargs = dict(
                     model=self.model,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    messages=messages
+                    messages=messages,
                 )
+                if "qwen" in (self.model or "").lower():
+                    kwargs["reasoning_effort"] = "none"
+                response = self.client.chat.completions.create(**kwargs)
                 return response.choices[0].message.content
             except Exception as e:
                 err_str = str(e)
