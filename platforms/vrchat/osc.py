@@ -499,10 +499,19 @@ def detect_movement_request(text: str) -> tuple[str | None, str | None]:
     """
     low = text.lower().strip()
 
-    # Autonomy mode switches
-    if re.search(r"\b(stay here|stay put|stop moving|don'?t wander|hold still|chill here|wait here)\b", low):
+    # Autonomy mode switches (controllable by voice or chatbox in-game!)
+    if re.search(
+        r"\b(chill|chill out|chill here|chill with me|stay here|stay put|stay with me|"
+        r"hang out here|stop moving|stop walking|stop wandering|stop roaming|"
+        r"don'?t wander|don'?t move|hold still|wait here|just talk)\b",
+        low,
+    ):
         return ("chill", "stop")
-    if re.search(r"\b(roam|wander|explore|walk around|move around|do what you want|be free)\b", low):
+    if re.search(
+        r"\b(roam|wander|explore|walk around|move around|do what you want|be free|"
+        r"you'?re free|go explore|have freedom)\b",
+        low,
+    ):
         return ("roam", "wander_step")
 
     # Hand emotes & full-body animations (VRCEmote 1..8 + facial expressions)

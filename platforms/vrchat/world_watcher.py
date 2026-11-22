@@ -139,7 +139,7 @@ class VRChatWorldState:
         self.world_name: str = "VRChat World"
         self.current_instance_id: str = ""
         self.players: set[str] = set()
-        self.behavior_mode: str = "chill"      # Default: stay put, look at you, and talk (no random roaming!)
+        self.behavior_mode: str = "roam"       # Default: full freedom to explore, approach friends, and chat (say 'chill' anytime to stay put!)
         self.last_action: str = "looking at Kai"
         self.visual_scene: str = ""
         self.recent_events: deque[str] = deque(maxlen=5)
