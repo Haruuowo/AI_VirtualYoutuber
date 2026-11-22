@@ -36,9 +36,10 @@ struct Pose7 {
 };
 
 static std::mutex g_pose_mutex;
-static Pose7 g_hmd_pose   = {  0.00f, 1.35f,  0.00f, 1.0f, 0.0f, 0.0f, 0.0f };
-static Pose7 g_left_pose  = { -0.22f, 0.90f, -0.18f, 1.0f, 0.0f, 0.0f, 0.0f };
-static Pose7 g_right_pose = {  0.22f, 0.90f, -0.18f, 1.0f, 0.0f, 0.0f, 0.0f };
+// 1.58m eye height matches VRChat's 1.675m PlayerHeight calibration so her knees stand 100% straight!
+static Pose7 g_hmd_pose   = {  0.00f, 1.58f,  0.00f, 1.0f, 0.0f, 0.0f, 0.0f };
+static Pose7 g_left_pose  = { -0.22f, 1.10f, -0.16f, 1.0f, 0.0f, 0.0f, 0.0f };
+static Pose7 g_right_pose = {  0.22f, 1.10f, -0.16f, 1.0f, 0.0f, 0.0f, 0.0f };
 static std::atomic<long long> g_last_udp_ms{ 0 };
 
 static long long NowMs() {
@@ -291,9 +292,9 @@ private:
                 float tilt_z = static_cast<float>(std::sin(t * 0.7) * 0.045); // ~5 deg subtle head tilt
                 float qw = std::sqrt(std::max(0.0f, 1.0f - tilt_z * tilt_z));
                 std::lock_guard<std::mutex> lock(g_pose_mutex);
-                g_hmd_pose   = {  0.00f, 1.35f + breath,  0.00f, qw, 0.0f, 0.0f, tilt_z };
-                g_left_pose  = { -0.20f, 0.92f + breath * 0.8f, -0.18f, 0.98f, 0.15f, 0.0f, 0.10f };
-                g_right_pose = {  0.20f, 0.92f + breath * 0.8f, -0.18f, 0.98f, 0.15f, 0.0f, -0.10f };
+                g_hmd_pose   = {  0.00f, 1.58f + breath,  0.00f, qw, 0.0f, 0.0f, tilt_z };
+                g_left_pose  = { -0.22f, 1.10f + breath * 0.8f, -0.16f, 0.98f, 0.15f, 0.0f, 0.10f };
+                g_right_pose = {  0.22f, 1.10f + breath * 0.8f, -0.16f, 0.98f, 0.15f, 0.0f, -0.10f };
             }
             if (hmd_)   hmd_->PublishPose();
             if (left_)  left_->PublishPose();

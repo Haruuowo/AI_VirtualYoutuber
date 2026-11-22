@@ -117,72 +117,49 @@ def _ensure_steamvr_running():
         time.sleep(4.5)
 
 
-def _kill_luna_profile1_vrchat():
-    """Closes ONLY Luna's Profile 1 VRChat window (never touches your Profile 0 main window)."""
+def _configure_vrchat_registry_for_luna():
+    """
+    Ensures VRChat's Windows Registry PlayerPrefs are configured so Luna works
+    seamlessly in SteamVR Mode:
+      1. VRC_HOME_ACCESS_TYPE = 1 (Friends+ / ~hidden Home instance so you can 1-click
+         'Join' her from your Desktop Social menu without ever needing an invite!)
+      2. VRC_MAIN_MENU_MOVEMENT_LOCKED = 0 (So VRChat's startup MainMenuLiveNow popup
+         never locks her walking/turning!)
+      3. VRC_INPUT_MIC_DEVICE_NAME_VR = 'CABLE Output (VB-Audio Virtual Cable)'
+      4. UI.Settings.Osc = 1 & VRC_INPUT_OSC = 1
+    """
     if sys.platform != "win32":
         return
-    cmd = (
-        "Get-CimInstance Win32_Process -Filter \"Name = 'VRChat.exe'\" | "
-        "Where-Object { $_.CommandLine -match '--profile=1' } | "
-        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
-    )
-    subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True)
-
-
-def travel_luna_to_instance(target_instance: str, use_vr: bool = False):
-    """
-    Teleports Luna (Profile 1) directly into `target_instance` (`wrld_...:instance`)
-    by relaunching her Profile 1 client with `vrchat://launch?id=<target_instance>`.
-    Never touches your main VRChat window (Profile 0)!
-    """
-    if use_vr:
-        _ensure_steamvr_running()
-    vrc_dir = _find_vrc_dir()
-    if not vrc_dir:
-        return
-    url = target_instance if target_instance.startswith("vrchat://") else f"vrchat://launch?id={target_instance}"
-    print(f"\n[auto-join] Traveling Luna (Profile 1) directly into room: {url}")
-    _kill_luna_profile1_vrchat()
-    time.sleep(1.5)
-    launch_exe = str(vrc_dir / "launch.exe")
-    luna_args = [launch_exe, "--profile=1"]
-    if not use_vr:
-        luna_args.append("--no-vr")
-    luna_args.extend([
-        "-screen-width", "854", "-screen-height", "480", "-screen-fullscreen", "0",
-        "--fps=30", "--osc=9002:127.0.0.1:9003",
-        url,
-    ])
-    subprocess.Popen(luna_args, cwd=str(vrc_dir))
-
-
-def _luna_is_in_private_solo_room() -> bool:
-    """Returns True if Luna's current VRChat window is stuck in an Invite-Only (~private) room."""
-    folder = default_vrc_log_dir()
-    from platforms.vrchat.world_watcher import RE_WORLD_ID, pick_luna_log
-    luna_log = pick_luna_log(folder)
-    if not luna_log:
-        return False
     try:
-        matches = RE_WORLD_ID.findall(luna_log.read_text(encoding="utf-8", errors="ignore"))
-        return bool(matches and "~private(" in matches[-1])
-    except OSError:
-        return False
+        import winreg
+        k = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\VRChat\VRChat",
+            0,
+            winreg.KEY_READ | winreg.KEY_WRITE,
+        )
+        winreg.SetValueEx(k, "VRC_HOME_ACCESS_TYPE_h350155342", 0, winreg.REG_DWORD, 1)
+        winreg.SetValueEx(k, "VRC_MAIN_MENU_MOVEMENT_LOCKED_h1046269715", 0, winreg.REG_DWORD, 0)
+        winreg.SetValueEx(k, "UI.Settings.Osc_h1043380067", 0, winreg.REG_DWORD, 1)
+        winreg.SetValueEx(k, "VRC_INPUT_OSC_h1104161515", 0, winreg.REG_DWORD, 1)
+        cable_bytes = b"CABLE Output (VB-Audio Virtual Cable)\x00"
+        winreg.SetValueEx(k, "VRC_INPUT_MIC_DEVICE_NAME_VR_h2729556311", 0, winreg.REG_BINARY, cable_bytes)
+        winreg.CloseKey(k)
+    except Exception as e:
+        print(f"[registry] Note: could not update VRChat prefs: {e}")
 
 
-def ensure_luna_vrchat_window(use_vr: bool = False):
+def ensure_luna_vrchat_window(use_vr: bool = True):
     """
-    Launches ONLY Luna's VRChat window (Profile 1, OSC port 9002) directly into your
-    current joinable room (or the shared Friends+ room) so you never need to open her
-    VR menu to accept an invite!
+    Launches ONLY Luna's VRChat window (Profile 1, OSC port 9002) ONCE if it isn't
+    already open. Never restarts or loops an already-running VRChat window!
     """
+    _configure_vrchat_registry_for_luna()
     if use_vr:
         _ensure_steamvr_running()
     vrc_dir = _find_vrc_dir()
     if not vrc_dir:
         return
-    target_instance = get_target_instance_for_luna()
-    url = f"vrchat://launch?id={target_instance}"
     launch_exe = str(vrc_dir / "launch.exe")
     luna_args = [launch_exe, "--profile=1"]
     if not use_vr:
@@ -190,19 +167,15 @@ def ensure_luna_vrchat_window(use_vr: bool = False):
     luna_args.extend([
         "-screen-width", "854", "-screen-height", "480", "-screen-fullscreen", "0",
         "--fps=30", "--osc=9002:127.0.0.1:9003",
-        url,
     ])
 
     count = _count_vrchat_processes()
     if count == 0 or (count == 1 and not _newest_log_is_profile1()):
         mode_lbl = "6-DOF STEAMVR MODE" if use_vr else "Desktop Mode"
-        print(f"[launcher] Opening LUNA's VRChat window (Profile 1, {mode_lbl}, 854x480, OSC 9002) -> {target_instance}")
+        print(f"[launcher] Opening LUNA's VRChat window (Profile 1, {mode_lbl}, Friends+ Home, 854x480, OSC 9002)...")
         subprocess.Popen(luna_args, cwd=str(vrc_dir))
-    elif _luna_is_in_private_solo_room():
-        print(f"[launcher] Luna was in an Invite-Only (~private) room; moving her to shared Friends+ room -> {target_instance}")
-        travel_luna_to_instance(target_instance, use_vr=use_vr)
     else:
-        print("[launcher] Luna's VRChat window (Profile 1) is already open in a joinable room!")
+        print("[launcher] Luna's VRChat window (Profile 1) is already open!")
 
 AUTONOMOUS_THOUGHT_PROMPTS = [
     "Look at what your eyes currently see in front of you in VRChat and make a sassy, smug comment about it.",
@@ -553,21 +526,8 @@ class LunaInVRChat:
                 print(f"[mind] {e}")
 
     async def on_vrc_event(self, kind: str, value: str):
-        """Triggered automatically by VRChat log watcher when worlds, invites, or players change."""
-        if kind in ("invite_received", "follow_main_user"):
-            now = time.time()
-            if now - self.last_auto_travel < 35.0:
-                return
-            if value == self.world.current_instance_id:
-                return
-            self.last_auto_travel = now
-            self.world.current_instance_id = value
-            reason = "Received invite" if kind == "invite_received" else "Kai changed worlds"
-            print(f"\n[auto-join] {reason} -> automatically joining {value}")
-            await asyncio.to_thread(travel_luna_to_instance, value, self.use_vr)
-            return
-
-        if not self.autonomy_enabled:
+        """Triggered automatically by VRChat log watcher when worlds or players change."""
+        if not self.autonomy_enabled or kind not in ("world_change", "player_join"):
             return
         if kind == "world_change":
             print(f"\n[vrchat] Entered world: {value}")

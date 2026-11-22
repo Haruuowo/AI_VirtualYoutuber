@@ -269,16 +269,6 @@ async def watch_vrchat_logs(state: VRChatWorldState, on_event, log_dir: Path | N
                         state.player_left(m_left.group(1).strip())
                     line = file_obj.readline()
 
-            # Also check if your main account (DumAlcoholicPa3) moved to a new joinable room
-            main_world = await asyncio.to_thread(get_target_instance_for_luna, folder)
-            if (
-                main_world
-                and state.current_instance_id
-                and main_world != state.current_instance_id
-                and "~private(" not in main_world
-            ):
-                await on_event("follow_main_user", main_world)
-
             await asyncio.sleep(1.0)
     finally:
         if file_obj:

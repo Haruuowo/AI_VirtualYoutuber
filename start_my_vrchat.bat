@@ -2,9 +2,9 @@
 REM ============================================================================
 REM OPEN YOUR MAIN VRCHAT ACCOUNT (Profile 0 = DumAlcoholicPa3, OSC Port 9000)
 REM ============================================================================
-REM Launches your main VRChat in Desktop Mode (--no-vr) directly into a shared
-REM Friends+ (~hidden) instance of your Home world so Luna spawns right next to
-REM you automatically without needing any invite!
+REM Launches your main VRChat in Desktop Mode (--no-vr). Since Luna's Home room
+REM is automatically configured as Friends+ (VRC_HOME_ACCESS_TYPE = 1), just
+REM open your Social menu, click kairu!, and click "Join" (no invite needed!).
 REM ============================================================================
 title Starting YOUR Main VRChat (Profile 0)
 
@@ -19,7 +19,5 @@ if not defined VRC_DIR (
     exit /b 1
 )
 
-set "SHARED_WORLD=vrchat://launch?id=wrld_79e079c1-9548-48e7-a16e-e4836e1fd922:77777~hidden(usr_2df6f681-876a-43d1-a3ca-4886540811fe)~region(jp)"
-
-echo   Opening YOUR Main VRChat window (Profile 0 - DumAlcoholicPa3) in Shared Friends+ Room...
-start "" /D "%VRC_DIR%" "%VRC_DIR%\launch.exe" --profile=0 --no-vr "%SHARED_WORLD%"
+echo   Opening YOUR Main VRChat window (Profile 0 - DumAlcoholicPa3)...
+start "" /D "%VRC_DIR%" "%VRC_DIR%\launch.exe" --profile=0 --no-vr
