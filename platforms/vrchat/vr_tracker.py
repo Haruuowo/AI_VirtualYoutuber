@@ -44,6 +44,19 @@ def _lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * max(0.0, min(1.0, t))
 
 
+def _organic(t: float, seed: float = 0.0) -> float:
+    """
+    Smooth non-repeating multi-frequency organic wave in roughly [-1.0, 1.0].
+    Combines 3 non-harmonic frequencies so idle breathing, weight shifts, and
+    head tilts never loop like a robotic metronome.
+    """
+    return (
+        0.52 * math.sin(t * 0.37 + seed)
+        + 0.31 * math.sin(t * 0.83 + seed * 2.13 + 1.1)
+        + 0.17 * math.sin(t * 1.47 + seed * 3.71 + 2.4)
+    )
+
+
 class VirtualVRPoseController:
     """Background 60 Hz procedural 6-DOF VR Head + Hands + Joystick Locomotion animator."""
 
@@ -54,7 +67,10 @@ class VirtualVRPoseController:
         self.current_action = "idle"
         self.action_until = 0.0
         self.action_started = 0.0
-        self.gaze_yaw_deg = 0.0   # Driven by YOLOv8 person tracking (-30..+30 deg)
+        self.gaze_yaw_deg = 0.0    # Horizontal neck turn toward target (-36..+36 deg)
+        self.gaze_pitch_deg = 0.0  # Vertical head tilt toward target's face (-18..+22 deg)
+        self._smooth_state: list[float] | None = None
+        self._last_pose_t: float | None = None
         self._loco_strafe = 0.0
         self._loco_forward = 0.0
         self._loco_turn = 0.0
@@ -124,9 +140,18 @@ class VirtualVRPoseController:
             return self._speech_env[idx]
         return 0.0
 
+    def set_gaze_target(self, offset_x: float, offset_y: float = 0.0):
+        """
+        Smoothly aims her 3D VR head/neck toward a detected person's face:
+          offset_x: -1.0 (left) .. +1.0 (right)  -> neck yaw   (+36..-36 deg)
+          offset_y: -1.0 (up)   .. +1.0 (down)   -> head pitch (+22..-18 deg)
+        """
+        self.gaze_yaw_deg = float(max(-36.0, min(36.0, -offset_x * 34.0)))
+        self.gaze_pitch_deg = float(max(-18.0, min(22.0, -offset_y * 24.0)))
+
     def set_gaze_offset(self, offset_norm: float):
-        """Points her 3D VR head directly toward the detected person (-1.0 left .. +1.0 right)."""
-        self.gaze_yaw_deg = float(max(-35.0, min(35.0, -offset_norm * 30.0)))
+        """Backward-compatible horizontal-only gaze setter (-1.0 left .. +1.0 right)."""
+        self.set_gaze_target(offset_norm, 0.0)
 
     def set_locomotion(
         self,
@@ -159,20 +184,26 @@ class VirtualVRPoseController:
 
     def _compute_poses(self, t: float) -> list[float]:
         # Base standing eye height = 1.68m (matches VRChat PlayerHeight=1.675m so legs stand 100% straight!)
-        breath = math.sin(t * 1.9) * 0.015
-        sway_x = math.sin(t * 0.85) * 0.028
+        # Multi-frequency organic breathing & weight-shift so she never loops like a metronome
+        breath = math.sin(t * 1.45) * 0.011 + math.sin(t * 0.61) * 0.004
+        sway_x = _organic(t, 0.7) * 0.030
+        sway_z = _organic(t, 2.3) * 0.014
 
-        # Default cutesy-smug idle pose (lively breathing, gentle sway, & expressive head tilt):
-        h_x, h_y, h_z = sway_x, 1.68 + breath, 0.0
-        h_pitch = math.sin(t * 1.1) * 4.0
-        h_yaw = self.gaze_yaw_deg + math.sin(t * 0.55) * 4.5
-        h_roll = 9.5 * math.sin(t * 0.70)  # Cutesy-smug head tilt!
+        # Natural living idle pose: 2D gaze (yaw + pitch) + subtle organic head micro-motion
+        h_x, h_y, h_z = sway_x, 1.68 + breath, sway_z
+        h_pitch = self.gaze_pitch_deg + _organic(t, 1.4) * 3.8
+        h_yaw = self.gaze_yaw_deg + _organic(t, 3.1) * 5.0
+        h_roll = _organic(t, 4.9) * 7.5 + sway_x * 90.0
 
-        # Sassy relaxed hands at waist/hip height with subtle organic idle shift
-        l_x, l_y, l_z = -0.23 + sway_x * 0.7, 1.19 + breath * 1.1 + math.sin(t * 1.2) * 0.02, -0.16
-        r_x, r_y, r_z =  0.23 + sway_x * 0.7, 1.19 + breath * 1.1 + math.cos(t * 1.2) * 0.02, -0.16
-        l_pitch, l_yaw, l_roll = 18.0 + math.sin(t * 1.1) * 4.0,  12.0,  20.0
-        r_pitch, r_yaw, r_roll = 18.0 + math.cos(t * 1.1) * 4.0, -12.0, -20.0
+        # Relaxed natural arms at waist/hip height with subtle asymmetric breathing & weight-shift follow
+        l_x = -0.23 + sway_x * 0.65 + _organic(t, 5.2) * 0.014
+        l_y = 1.19 + breath * 1.15 + _organic(t, 6.1) * 0.018
+        l_z = -0.16 + sway_z * 0.6 + _organic(t, 7.3) * 0.014
+        r_x = 0.23 + sway_x * 0.65 + _organic(t, 8.4) * 0.014
+        r_y = 1.19 + breath * 1.15 + _organic(t, 9.5) * 0.018
+        r_z = -0.16 + sway_z * 0.6 + _organic(t, 10.6) * 0.014
+        l_pitch, l_yaw, l_roll = 18.0 + _organic(t, 11.2) * 4.5, 12.0 + _organic(t, 12.0) * 3.0, 20.0
+        r_pitch, r_yaw, r_roll = 18.0 + _organic(t, 13.4) * 4.5, -12.0 + _organic(t, 14.1) * 3.0, -20.0
 
         act = self.current_action if t < self.action_until else "idle"
         dt = t - self.action_started
@@ -318,6 +349,36 @@ class VirtualVRPoseController:
             r_x =  0.22 + energy * 0.08 * abs(math.cos(talk_t * 0.9))
             l_pitch = 22.0 + energy * 18.0
             r_pitch = 24.0 + energy * 22.0
+
+        # ── Smooth Per-Channel Exponential Pose Blending (Zero 1-Frame Snapping) ──
+        target = [
+            h_x, h_y, h_z, h_pitch, h_yaw, h_roll,
+            l_x, l_y, l_z, l_pitch, l_yaw, l_roll,
+            r_x, r_y, r_z, r_pitch, r_yaw, r_roll,
+        ]
+        if self._smooth_state is None or self._last_pose_t is None:
+            self._smooth_state = list(target)
+        else:
+            dt_frame = max(0.001, min(0.10, t - self._last_pose_t))
+            # Natural biomechanical speeds: responsive neck gaze, fluid arm arcs, gentle torso sway
+            a_pos = 1.0 - math.exp(-dt_frame * 5.2)
+            a_head_rot = 1.0 - math.exp(-dt_frame * 7.8)
+            a_arm = 1.0 - math.exp(-dt_frame * 6.5)
+            alphas = (
+                a_pos, a_pos, a_pos, a_head_rot, a_head_rot, a_head_rot,
+                a_arm, a_arm, a_arm, a_arm, a_arm, a_arm,
+                a_arm, a_arm, a_arm, a_arm, a_arm, a_arm,
+            )
+            cur = self._smooth_state
+            for i in range(18):
+                cur[i] += (target[i] - cur[i]) * alphas[i]
+        self._last_pose_t = t
+
+        (
+            h_x, h_y, h_z, h_pitch, h_yaw, h_roll,
+            l_x, l_y, l_z, l_pitch, l_yaw, l_roll,
+            r_x, r_y, r_z, r_pitch, r_yaw, r_roll,
+        ) = self._smooth_state
 
         hq = euler_deg_to_quat(h_pitch, h_yaw, h_roll)
         lq = euler_deg_to_quat(l_pitch, l_yaw, l_roll)

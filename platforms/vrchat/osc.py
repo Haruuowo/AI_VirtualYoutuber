@@ -240,21 +240,24 @@ class VRChatOSC:
         self.set_param("Blink", False)
         self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.18)
 
-    async def lock_gaze_on_offset(self, offset: float):
+    async def lock_gaze_on_offset(self, offset: float, offset_y: float = 0.0):
         """
-        Turns Luna's head/body toward `offset` (-1.0 left .. +1.0 right) so she centers
-        the speaker in her view and keeps her 3D VR head & eyes locked onto them.
+        Natural Eye -> Head -> Body gaze tracking toward (offset_x, offset_y):
+        Moves Luna's eyes and 3D VR head/neck first, and only gently rotates her
+        whole body when someone moves further off-center (> 0.26), preventing
+        robotic whole-body twitch-turning on small shifts.
         """
-        self.vr_tracker.set_gaze_offset(offset)
-        self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=True, emotion_idx=1)
-        self.set_eyes(pitch=-2.0, yaw=float(offset * 16.0), closed=0.16)
-        if abs(offset) > 0.14:
-            speed = 0.42 if offset > 0 else -0.42
-            dur = min(0.45, max(0.10, abs(offset) * 0.36))
+        eye_pitch = float(max(-16.0, min(18.0, -offset_y * 14.0)))
+        eye_yaw = float(max(-20.0, min(20.0, offset * 18.0)))
+        self.vr_tracker.set_gaze_target(offset, offset_y)
+        self.set_eyes(pitch=eye_pitch, yaw=eye_yaw, closed=0.14)
+        if abs(offset) > 0.26:
+            speed = 0.32 if offset > 0 else -0.32
+            dur = min(0.42, max(0.10, (abs(offset) - 0.12) * 0.34))
             await self.turn(speed=speed, duration=dur)
-            # Keep partial VR head lead toward target rather than snapping back to 0.0
-            self.vr_tracker.set_gaze_offset(offset * 0.35)
-            self.set_eyes(pitch=-2.0, yaw=float(offset * 5.0), closed=0.16)
+            # Keep natural residual neck + eye lead toward target instead of snapping to 0
+            self.vr_tracker.set_gaze_target(offset * 0.35, offset_y)
+            self.set_eyes(pitch=eye_pitch, yaw=float(offset * 6.0), closed=0.14)
 
     async def emote(self, emote_id: int, duration: float = 2.8, happy: bool = True, blush: float = 0.45, emotion_idx: int = 1):
         """

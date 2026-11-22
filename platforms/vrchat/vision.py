@@ -255,16 +255,17 @@ def detect_avatars_yolo(img: Image.Image) -> list[tuple[float, float, float, flo
     return boxes
 
 
-def _detect_vrchat_nametag_offset(img: Image.Image) -> tuple[bool, float, float]:
+def _detect_vrchat_nametag_2d(img: Image.Image) -> tuple[bool, float, float, float]:
     """
     Fallback player detector when YOLOv8 misses dark-clothed anime avatars:
     spots VRChat's glowing golden/blue/green/white floating nametag pill in the upper
-    65% of the frame and returns (found, horiz_offset, est_height_ratio).
+    65% of the frame and returns (found, offset_x, offset_y, est_height_ratio).
     """
     try:
         arr = np.asarray(img)
         h, w, _ = arr.shape
-        roi = arr[int(h * 0.08):int(h * 0.65), :, :]
+        roi_top = int(h * 0.08)
+        roi = arr[roi_top:int(h * 0.65), :, :]
         hsv = cv2.cvtColor(roi, cv2.COLOR_RGB2HSV)
         # VRChat friend nametags glow bright yellow/gold, cyan/blue, or green on dark translucent pill
         mask_gold = cv2.inRange(hsv, np.array([15, 110, 150]), np.array([38, 255, 255]))
@@ -289,21 +290,36 @@ def _detect_vrchat_nametag_offset(img: Image.Image) -> tuple[bool, float, float]
         if best is not None:
             x, y, bw, bh = best
             cx = x + bw / 2.0
-            offset = (cx - (w / 2.0)) / (w / 2.0)
+            # Avatar's face is right below the floating nametag pill
+            cy = roi_top + y + bh + bh * 1.4
+            offset_x = (cx - (w / 2.0)) / (w / 2.0)
+            offset_y = (cy - (h / 2.0)) / (h / 2.0)
             est_h = min(0.85, max(0.25, (bw / float(w)) * 2.4))
-            return (True, float(max(-1.0, min(1.0, offset))), float(est_h))
+            return (
+                True,
+                float(max(-1.0, min(1.0, offset_x))),
+                float(max(-1.0, min(1.0, offset_y))),
+                float(est_h),
+            )
     except Exception:
         pass
-    return (False, 0.0, 0.0)
+    return (False, 0.0, 0.0, 0.0)
 
 
-def track_target_person(img: Image.Image) -> tuple[bool, float, float]:
+def _detect_vrchat_nametag_offset(img: Image.Image) -> tuple[bool, float, float]:
+    """Backward-compatible wrapper returning (found, offset_x, est_height_ratio)."""
+    found, ox, _, est_h = _detect_vrchat_nametag_2d(img)
+    return (found, ox, est_h)
+
+
+def track_target_person_2d(img: Image.Image) -> tuple[bool, float, float, float]:
     """
     Finds the closest avatar/person in Luna's VRChat camera view using YOLOv8-nano,
     with a VRChat glowing nametag pill fallback for dark/stylized anime avatars.
-    Returns (found, offset, height_ratio):
+    Returns (found, offset_x, offset_y, height_ratio):
         found:        True only when an actual character/person is visible (never walls/posters!)
-        offset:       [-1.0 left .. 0.0 center .. +1.0 right]
+        offset_x:     [-1.0 left .. 0.0 center .. +1.0 right]
+        offset_y:     [-1.0 top (look up) .. 0.0 eye-level .. +1.0 bottom (look down)]
         height_ratio: fraction of frame height [0.0 .. 1.0] occupied by the avatar
     """
     try:
@@ -311,18 +327,28 @@ def track_target_person(img: Image.Image) -> tuple[bool, float, float]:
     except Exception:
         boxes = []
     if not boxes:
-        return _detect_vrchat_nametag_offset(img)
+        return _detect_vrchat_nametag_2d(img)
 
     w, h = img.size
     x1, y1, x2, y2, _ = boxes[0]
     cx = (x1 + x2) / 2.0
-    offset = (cx - (w / 2.0)) / (w / 2.0)
+    # Aim at the upper ~22% of the avatar bounding box (face / eyes, not chest/legs!)
+    cy = y1 + (y2 - y1) * 0.22
+    offset_x = (cx - (w / 2.0)) / (w / 2.0)
+    offset_y = (cy - (h / 2.0)) / (h / 2.0)
     height_ratio = (y2 - y1) / float(h)
     return (
         True,
-        float(max(-1.0, min(1.0, offset))),
+        float(max(-1.0, min(1.0, offset_x))),
+        float(max(-1.0, min(1.0, offset_y))),
         float(max(0.0, min(1.0, height_ratio))),
     )
+
+
+def track_target_person(img: Image.Image) -> tuple[bool, float, float]:
+    """Backward-compatible 3-tuple wrapper around `track_target_person_2d`."""
+    found, ox, _, hr = track_target_person_2d(img)
+    return (found, ox, hr)
 
 
 def find_target_horizontal_offset(img: Image.Image) -> float:
