@@ -26,7 +26,7 @@ _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
 def _get_kokoro():
-    """Singleton loader for Kokoro-82M ONNX emotional TTS (~0.0 GB GPU VRAM)."""
+    """Singleton loader for Kokoro-82M ONNX TTS (~0.0 GB GPU VRAM)."""
     global _KOKORO_INSTANCE
     if _KOKORO_INSTANCE is None:
         os.makedirs(KOKORO_DIR, exist_ok=True)
@@ -41,87 +41,23 @@ def _get_kokoro():
     return _KOKORO_INSTANCE
 
 
-def _apply_neuro_contour_48k(
-    data_48k: np.ndarray,
-    clause: str = "",
-    emotion: str | None = None,
-    base_pitch: float = 1.0,
-) -> np.ndarray:
+def _upsample_24k_to_48k_stereo_clean(samples_24k: np.ndarray) -> np.ndarray:
     """
-    Applies a dynamic time-varying F0 pitch & volume inflection contour to a 48kHz
-    audio waveform in <0.5ms so questions rise ('?!'), sassy exclamations bounce ('!'),
-    and hugs/blushes sound warm and expressive instead of flat/monotone.
+    Clean 2x upsample from 24,000 Hz mono to 48,000 Hz stereo with ZERO pitch
+    or formant warping (no chipmunk effect!).
     """
-    arr = np.asarray(data_48k, dtype=np.float32)
-    if arr.ndim == 2:
-        s = arr[:, 0].ravel()
-    else:
-        s = arr.ravel()
-    n_in = len(s)
-    if n_in < 32:
-        return np.zeros((0, 2), dtype=np.float32)
-
-    # Trim dead leading/trailing silence so sentences flow together naturally
-    nz = np.flatnonzero(np.abs(s) > 0.006)
-    if len(nz) > 0:
-        pad = min(1400, n_in)  # ~30ms breath pad
-        start_i = max(0, int(nz[0]) - pad)
-        end_i = min(n_in, int(nz[-1]) + pad)
-        s = s[start_i:end_i]
-        n_in = len(s)
-
-    em = (emotion or "").lower()
-    text = clause.strip()
-    is_question = text.endswith("?") or "?!" in text
-    is_exclaim = "!" in text or em in ("sassy_react", "cheer", "clap", "wave", "dance", "point", "stick")
-    is_soft = em in ("hug", "blush", "headpat", "boop")
-
-    u = np.linspace(0.0, 1.0, n_in, dtype=np.float32)
-    contour = np.ones(n_in, dtype=np.float32) * float(base_pitch)
-
-    if is_question:
-        # Expressive incredulous / teasing question inflection: slight mid dip then +8.5% rising tail!
-        contour *= 1.0 - 0.025 * np.sin(np.pi * u) + 0.085 * np.clip((u - 0.60) / 0.40, 0.0, 1.0) ** 1.35
-    elif is_exclaim:
-        # Bouncy sassy/energetic arc: +6.5% punch on the opening reaction + lively mid wave
-        contour *= 1.0 + 0.065 * np.exp(-((u - 0.18) / 0.16) ** 2) + 0.03 * np.sin(2.5 * np.pi * u)
-    elif is_soft:
-        # Warm, sweet tsundere contour
-        contour *= 0.98 + 0.035 * np.sin(1.5 * np.pi * u)
-    else:
-        # Lively conversational contour
-        contour *= 1.0 + 0.04 * np.sin(2.0 * np.pi * u) - 0.02 * u
-
-    avg_step = float(np.mean(contour))
-    n_out = max(1, int(n_in / avg_step))
-    u_out = np.linspace(0.0, 1.0, n_out, dtype=np.float32)
-    steps_out = np.interp(u_out, u, contour)
-    in_indices = np.clip(np.cumsum(steps_out), 0.0, float(n_in - 1))
-
-    s48 = np.interp(in_indices, np.arange(n_in, dtype=np.float32), s).astype(np.float32)
-
-    if is_exclaim or is_question:
-        env = 1.0 + 0.15 * np.exp(-((u_out - 0.20) / 0.22) ** 2)
-        s48 = np.clip(s48 * env, -0.98, 0.98)
-
-    return np.column_stack((s48, s48))
-
-
-def _shape_vtuber_voice_48k_stereo(
-    samples_24k: np.ndarray,
-    clause: str = "",
-    emotion: str | None = None,
-    base_pitch: float = 1.32,
-) -> np.ndarray:
-    """Upsamples 24kHz Kokoro audio to 48kHz and shifts pitch into a young anime VTuber register."""
     s = np.asarray(samples_24k, dtype=np.float32).ravel()
     if len(s) == 0:
         return np.zeros((0, 2), dtype=np.float32)
+    nz = np.flatnonzero(np.abs(s) > 0.006)
+    if len(nz) > 0:
+        pad = min(960, len(s))
+        s = s[max(0, int(nz[0]) - pad):min(len(s), int(nz[-1]) + pad)]
     s48 = np.empty(len(s) * 2, dtype=np.float32)
     s48[0::2] = s
     s48[1:-1:2] = 0.5 * (s[:-1] + s[1:])
     s48[-1] = s[-1]
-    return _apply_neuro_contour_48k(s48, clause=clause, emotion=emotion, base_pitch=base_pitch)
+    return np.column_stack((s48, s48))
 
 
 def mp3_to_wav(mp3_path, wav_path):
@@ -143,12 +79,12 @@ class VoiceHandler:
         self.mirror_device = (mirror_device or os.getenv('MIRROR_AUDIO_DEVICE', '')).strip()
         self.elevenlabs_key = os.getenv('ELEVENLABS_API_KEY', '').strip()
         self.voice_id = os.getenv('ELEVENLABS_VOICE_ID', '').strip()
-        self.tts_engine = os.getenv('TTS_ENGINE', 'kokoro').lower().strip()
+        self.tts_engine = os.getenv('TTS_ENGINE', 'edge').lower().strip()
         if self.tts_engine in ('none', 'off', 'disabled'):
             self.tts_enabled = False
         self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AnaNeural').strip()
-        self.voice_pitch = os.getenv('VOICE_PITCH', '+18Hz').strip()
-        self.voice_rate = os.getenv('VOICE_RATE', '+12%').strip()
+        self.voice_pitch = os.getenv('VOICE_PITCH', '+8Hz').strip()
+        self.voice_rate = os.getenv('VOICE_RATE', '+8%').strip()
         self.ref_audio_path = os.getenv('REF_AUDIO_PATH', '').strip()
         self.device_id = None
         self.mirror_device_id = None
@@ -235,44 +171,21 @@ class VoiceHandler:
             time.sleep(0.25)
             self.is_speaking = False
 
-    def _get_kokoro_emotion_style(self, k, text: str, emotion: str | None = None):
-        """
-        Combines Kokoro-82M's two brightest voices (`75% af_heart + 25% af_bella`,
-        ~4750 Hz shifted spectral centroid) and shifts pitch up by 1.27x..1.34x
-        (+4.2 to +5.0 semitones) with speed compensation (0.81..0.85x) so Kokoro
-        sounds like a young, high-pitched anime VTuber (Neuro-sama age/tone)
-        instead of a deep adult woman!
-        """
-        em = (emotion or "").lower()
-        low = text.lower()
-        heart = k.get_voice_style("af_heart")  # Brightest, cutest voice in Kokoro (3799 Hz)
-        bella = k.get_voice_style("af_bella")  # Sharpest sassy inflection (3606 Hz)
-
-        if em in ("hug", "blush", "headpat", "boop") or any(w in low for w in ("hug", "cute", "fine,", "shoulder", "aw")):
-            # Pure af_heart at 1.27x pitch (+4.1 semitones) for soft, young tsundere warmth
-            return heart, 0.80, 1.27
-        if em in ("wave", "clap", "cheer", "dance", "happy_hop") or "!" in text:
-            # High-energy young anime bounce at 1.33x pitch (+5.0 semitones)
-            return 0.78 * heart + 0.22 * bella, 0.85, 1.33
-        if em in ("sassy_react", "stare_smug", "point", "stick") or "?" in text:
-            # Bratty, sassy Neuro-style roast delivery at 1.30x pitch (+4.6 semitones)
-            return 0.68 * heart + 0.32 * bella, 0.83, 1.30
-        return 0.75 * heart + 0.25 * bella, 0.83, 1.30
-
     async def _play_kokoro(self, text: str, emotion: str | None = None) -> bool:
+        """Clean Kokoro-82M synthesis (pure af_heart, 1.0x pitch, zero chipmunk formant shift)."""
         try:
             k = await asyncio.to_thread(_get_kokoro)
-            style, synth_speed, base_pitch = self._get_kokoro_emotion_style(k, text, emotion=emotion)
+            style = k.get_voice_style("af_heart")
+            em = (emotion or "").lower()
+            speed = 0.96 if em in ("hug", "blush", "headpat") else (1.08 if "!" in text else 1.03)
 
             clauses = [c.strip() for c in _SENTENCE_SPLIT_RE.split(text.strip()) if c.strip()]
             if not clauses:
                 return False
 
             def _synth(clause: str):
-                s24, _ = k.create(clause, voice=style, speed=synth_speed, lang="en-us")
-                return _shape_vtuber_voice_48k_stereo(
-                    s24, clause=clause, emotion=emotion, base_pitch=base_pitch
-                )
+                s24, _ = k.create(clause, voice=style, speed=speed, lang="en-us")
+                return _upsample_24k_to_48k_stereo_clean(s24)
 
             next_task = asyncio.create_task(asyncio.to_thread(_synth, clauses[0]))
             for i in range(len(clauses)):
@@ -339,26 +252,24 @@ class VoiceHandler:
 
     def _get_neuro_edge_prosody(self, clause: str, emotion: str | None = None) -> tuple[str, str]:
         """
-        Returns Neuro-sama style young anime girl pitch (+15Hz..+25Hz) and snappy rate
-        (+8%..+18%) dynamically per sentence/emotion for `en-US-AnaNeural`.
+        Native neural pitch (+6Hz..+12Hz) & rate (+5%..+12%) inside Microsoft's neural
+        vocoder for `en-US-AnaNeural` — keeps vocal tract formants 100% natural (zero
+        chipmunk effect!) while giving her Neuro-sama's young age and emotional bounce.
         """
         em = (emotion or "").lower()
         c = clause.strip()
         if em in ("hug", "blush", "headpat", "boop"):
-            return ("+15Hz", "+7%")
+            return ("+5Hz", "+4%")
         if "?!" in c or c.endswith("?"):
-            return ("+22Hz", "+14%")
+            return ("+11Hz", "+10%")
         if "!" in c or em in ("sassy_react", "cheer", "clap", "wave", "dance", "point", "stick"):
-            return ("+24Hz", "+16%")
-        return ("+19Hz", "+12%")
+            return ("+12Hz", "+12%")
+        return ("+8Hz", "+8%")
 
     async def _play_edge_tts(self, text, emotion: str | None = None):
         """
-        Neuro-sama style voice pipeline:
-          - Uses `en-US-AnaNeural` (young girl vocal tract matching Colibri Blind & Neuro-sama)
-          - Pitched UP (+15Hz to +24Hz instead of the old -5Hz deep pitch!) with snappy +12%..+16% cadence
-          - Synthesizes sentence-by-sentence with dynamic F0 pitch-contour shaping (`_apply_neuro_contour_48k`)
-            so questions rise, sassy comebacks bounce, and hugs soften!
+        Pure neural synthesis via `en-US-AnaNeural` (no NumPy pitch-warping, zero chipmunk
+        distortion!) with per-sentence native neural pitch & speed variation.
         """
         try:
             import edge_tts
@@ -366,7 +277,7 @@ class VoiceHandler:
             if not clauses:
                 return
 
-            async def _synth_clause(idx: int, clause: str) -> np.ndarray:
+            async def _synth_clause(idx: int, clause: str):
                 pitch, rate = self._get_neuro_edge_prosody(clause, emotion=emotion)
                 mp3_p = os.path.join(BASE_DIR, f"temp_audio_{os.getpid()}_{idx}.mp3")
                 wav_p = os.path.join(BASE_DIR, f"temp_audio_{os.getpid()}_{idx}.wav")
@@ -374,8 +285,8 @@ class VoiceHandler:
                     comm = edge_tts.Communicate(clause, self.edge_voice, pitch=pitch, rate=rate)
                     await comm.save(mp3_p)
                     await asyncio.to_thread(mp3_to_wav, mp3_p, wav_p)
-                    data, _ = sf.read(wav_p)
-                    return _apply_neuro_contour_48k(data, clause=clause, emotion=emotion, base_pitch=1.0)
+                    data, samplerate = sf.read(wav_p)
+                    return data, samplerate
                 finally:
                     for p in (mp3_p, wav_p):
                         if os.path.exists(p):
@@ -384,13 +295,12 @@ class VoiceHandler:
                             except OSError:
                                 pass
 
-            # Pipeline clauses: play clause 0 as soon as it's ready while clause 1 synthesizes!
             next_task = asyncio.create_task(_synth_clause(0, clauses[0]))
             for i in range(len(clauses)):
-                audio_48k = await next_task
+                data, samplerate = await next_task
                 if i + 1 < len(clauses):
                     next_task = asyncio.create_task(_synth_clause(i + 1, clauses[i + 1]))
-                if len(audio_48k) > 0:
-                    await asyncio.to_thread(self._play_samples, audio_48k, 48000)
+                if len(data) > 0:
+                    await asyncio.to_thread(self._play_samples, data, samplerate)
         except Exception as e:
             print(f"edge-tts error: {e}")
