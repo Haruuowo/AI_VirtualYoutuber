@@ -79,18 +79,25 @@ class VoiceHandler:
         self.mirror_device = (mirror_device or os.getenv('MIRROR_AUDIO_DEVICE', '')).strip()
         self.elevenlabs_key = os.getenv('ELEVENLABS_API_KEY', '').strip()
         self.voice_id = os.getenv('ELEVENLABS_VOICE_ID', '').strip()
-        self.tts_engine = os.getenv('TTS_ENGINE', 'edge').lower().strip()
+        self.tts_engine = os.getenv('TTS_ENGINE', 'gura').lower().strip()
         if self.tts_engine in ('none', 'off', 'disabled'):
             self.tts_enabled = False
         self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AnaNeural').strip()
-        self.voice_pitch = os.getenv('VOICE_PITCH', '+8Hz').strip()
-        self.voice_rate = os.getenv('VOICE_RATE', '+8%').strip()
+        self.voice_pitch = os.getenv('VOICE_PITCH', '+6Hz').strip()
+        self.voice_rate = os.getenv('VOICE_RATE', '+10%').strip()
         self.ref_audio_path = os.getenv('REF_AUDIO_PATH', '').strip()
         self.device_id = None
         self.mirror_device_id = None
         self.is_speaking = False
 
-        if self.tts_enabled and self.tts_engine == 'kokoro' and os.path.exists(KOKORO_MODEL):
+        if self.tts_enabled and self.tts_engine in ('gura', 'rvc'):
+            try:
+                from luna.rvc_infer.converter import get_gura_converter
+                get_gura_converter()
+                print("[Voice] Loaded Gawr Gura RVC v2 voice model (GuraTalkV2.pth)")
+            except Exception as e:
+                print(f"[Gura RVC Init Warning] {e}")
+        elif self.tts_enabled and self.tts_engine == 'kokoro' and os.path.exists(KOKORO_MODEL):
             try:
                 _get_kokoro()
             except Exception as e:
@@ -148,7 +155,12 @@ class VoiceHandler:
             return
         try:
             self.is_speaking = True
-            if self.tts_engine == 'kokoro':
+            if self.tts_engine in ('gura', 'rvc'):
+                success = await self._play_gura_rvc(text, emotion=emotion)
+                if not success:
+                    print("Gura RVC v2 failed, falling back to edge-tts...")
+                    await self._play_edge_tts(text, emotion=emotion)
+            elif self.tts_engine == 'kokoro':
                 success = await self._play_kokoro(text, emotion=emotion)
                 if not success:
                     print("Kokoro-82M failed, falling back to edge-tts...")
@@ -170,6 +182,53 @@ class VoiceHandler:
         finally:
             time.sleep(0.25)
             self.is_speaking = False
+
+    async def _play_gura_rvc(self, text: str, emotion: str | None = None) -> bool:
+        """
+        Synthesizes expressive speech clauses with `en-US-AnaNeural` and converts each
+        clause through the Gawr Gura RVC v2 model (`GuraTalkV2.pth`), pipelining clause
+        N+1 conversion while clause N plays into VRChat!
+        """
+        try:
+            import edge_tts
+            from luna.rvc_infer.converter import get_gura_converter
+
+            conv = await asyncio.to_thread(get_gura_converter)
+            clauses = [c.strip() for c in _SENTENCE_SPLIT_RE.split(text.strip()) if c.strip()]
+            if not clauses:
+                return False
+
+            async def _synth_gura_clause(idx: int, clause: str) -> np.ndarray:
+                pitch, rate = self._get_neuro_edge_prosody(clause, emotion=emotion)
+                mp3_p = os.path.join(BASE_DIR, f"temp_gura_{os.getpid()}_{idx}.mp3")
+                wav_p = os.path.join(BASE_DIR, f"temp_gura_{os.getpid()}_{idx}.wav")
+                try:
+                    comm = edge_tts.Communicate(clause, self.edge_voice, pitch=pitch, rate=rate)
+                    await comm.save(mp3_p)
+                    await asyncio.to_thread(mp3_to_wav, mp3_p, wav_p)
+                    data, sr = sf.read(wav_p)
+                    return await asyncio.to_thread(
+                        conv.convert_to_48k_stereo, data, sr, 0.0, 0.33
+                    )
+                finally:
+                    for p in (mp3_p, wav_p):
+                        if os.path.exists(p):
+                            try:
+                                os.remove(p)
+                            except OSError:
+                                pass
+
+            next_task = asyncio.create_task(_synth_gura_clause(0, clauses[0]))
+            for i in range(len(clauses)):
+                gura_48k = await next_task
+                if i + 1 < len(clauses):
+                    next_task = asyncio.create_task(_synth_gura_clause(i + 1, clauses[i + 1]))
+                if len(gura_48k) > 0:
+                    await asyncio.to_thread(self._play_samples, gura_48k, 48000)
+            return True
+        except Exception as e:
+            print(f"Gura RVC v2 error: {e}")
+            return False
 
     async def _play_kokoro(self, text: str, emotion: str | None = None) -> bool:
         """Clean Kokoro-82M synthesis (pure af_heart, 1.0x pitch, zero chipmunk formant shift)."""
