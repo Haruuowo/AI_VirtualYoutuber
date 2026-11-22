@@ -92,11 +92,11 @@ class VoiceHandler:
         self.mirror_device_id = None
         self.is_speaking = False
 
-        if self.tts_enabled and self.tts_engine in ('baelz', 'bae', 'gura', 'rvc'):
+        if self.tts_enabled and self.tts_engine in ('henya', 'baelz', 'bae', 'gura', 'rvc'):
             try:
                 from luna.rvc_infer.converter import get_rvc_converter, RVC_VOICE_MODELS
                 get_rvc_converter(self.tts_engine)
-                label = RVC_VOICE_MODELS.get(self.tts_engine, RVC_VOICE_MODELS["baelz"])[2]
+                label = RVC_VOICE_MODELS.get(self.tts_engine, RVC_VOICE_MODELS["henya"])[2]
                 print(f"[Voice] Loaded {label}")
             except Exception as e:
                 print(f"[RVC Init Warning] {e}")
@@ -157,7 +157,7 @@ class VoiceHandler:
         """Pre-synthesizes full continuous audio buffer before opening VRChat PTT (/input/Voice=1)."""
         if not self.tts_enabled or not text:
             return None
-        if self.tts_engine in ('baelz', 'bae', 'gura', 'rvc'):
+        if self.tts_engine in ('henya', 'baelz', 'bae', 'gura', 'rvc'):
             try:
                 rvc_48k = await self._synthesize_rvc(text, emotion=emotion)
                 if rvc_48k is not None and len(rvc_48k) > 0:
@@ -184,7 +184,7 @@ class VoiceHandler:
             return
         try:
             self.is_speaking = True
-            if self.tts_engine in ('baelz', 'bae', 'gura', 'rvc'):
+            if self.tts_engine in ('henya', 'baelz', 'bae', 'gura', 'rvc'):
                 success = await self._play_rvc(text, emotion=emotion)
                 if not success:
                     print("RVC v2 failed, falling back to edge-tts...")

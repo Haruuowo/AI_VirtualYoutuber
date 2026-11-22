@@ -21,8 +21,14 @@ RVC_DIR = os.path.join(BASE_DIR, "models", "rvc")
 CONTENTVEC_ONNX = os.path.join(RVC_DIR, "vec-768-layer-12.onnx")
 GURA_PTH = os.path.join(RVC_DIR, "gura", "GuraTalkV2.pth")
 BAELZ_PTH = os.path.join(RVC_DIR, "baelz", "baetalk_e215_s6235.pth")
+HENYA_PTH = os.path.join(RVC_DIR, "henya", "henya.pth")
 
 RVC_VOICE_MODELS = {
+    "henya": (
+        HENYA_PTH,
+        "https://huggingface.co/dacoolkid44/VTuber-RVC/resolve/main/Henya%20The%20Genius/henya.pth",
+        "Henya the Genius RVC v2 (henya.pth)",
+    ),
     "baelz": (
         BAELZ_PTH,
         "https://huggingface.co/dacoolkid44/VTuber-RVC/resolve/main/Hakos%20Baelz/baetalk_e215_s6235.pth",
@@ -123,7 +129,7 @@ class RVCv2Converter:
 
     def _extract_f0(self, audio_16k: np.ndarray, p_len: int, f0_up_key: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
         time_step = (self.window / self.sr_in)
-        f0_min, f0_max = 65.0, 800.0
+        f0_min, f0_max = 50.0, 800.0
         f0_mel_min = 1127.0 * np.log(1.0 + f0_min / 700.0)
         f0_mel_max = 1127.0 * np.log(1.0 + f0_max / 700.0)
 
@@ -131,7 +137,7 @@ class RVCv2Converter:
             parselmouth.Sound(audio_16k.astype(np.float64), self.sr_in)
             .to_pitch_ac(
                 time_step=time_step,
-                voicing_threshold=0.6,
+                voicing_threshold=0.42,
                 pitch_floor=f0_min,
                 pitch_ceiling=f0_max,
             )
@@ -262,13 +268,21 @@ class RVCv2Converter:
             audio_out,
         ).astype(np.float32)
 
+        # Consistent RMS loudness + soft-knee limiting so quiet words never drop below VRChat uSpeak VAD
+        active = s48[np.abs(s48) > 0.015]
+        if len(active) > 0:
+            rms = float(np.sqrt(np.mean(active * active)))
+            if rms > 0.005:
+                gain = min(4.5, 0.20 / rms)
+                s48 = s48 * gain
+        s48 = np.tanh(s48 * 0.95).astype(np.float32)
         peak = float(np.max(np.abs(s48)))
         if peak > 0.01:
             s48 = (s48 / peak) * 0.88
 
-        # Prepend 120ms & append 350ms zero silence so VB-Cable and VRChat uSpeak never clip start/tail
-        lead_sil = np.zeros(int(48000 * 0.12), dtype=np.float32)
-        tail_sil = np.zeros(int(48000 * 0.35), dtype=np.float32)
+        # Prepend 180ms & append 450ms zero silence so VB-Cable and VRChat uSpeak never clip start/tail
+        lead_sil = np.zeros(int(48000 * 0.18), dtype=np.float32)
+        tail_sil = np.zeros(int(48000 * 0.45), dtype=np.float32)
         s48 = np.concatenate((lead_sil, s48, tail_sil))
 
         return np.column_stack((s48, s48))
