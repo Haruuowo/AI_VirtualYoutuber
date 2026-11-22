@@ -138,8 +138,10 @@ public:
 
     vr::EVRInitError Activate(uint32_t unObjectId) override {
         vr::PropertyContainerHandle_t c = vr::VRProperties()->TrackedDeviceToPropertyContainer(unObjectId);
-        vr::VRProperties()->SetStringProperty(c, vr::Prop_ModelNumber_String, "Luna Virtual HMD");
-        vr::VRProperties()->SetStringProperty(c, vr::Prop_ManufacturerName_String, "LunaAI");
+        vr::VRProperties()->SetStringProperty(c, vr::Prop_TrackingSystemName_String, "oculus");
+        vr::VRProperties()->SetStringProperty(c, vr::Prop_ModelNumber_String, "Oculus Quest2");
+        vr::VRProperties()->SetStringProperty(c, vr::Prop_ManufacturerName_String, "Oculus");
+        vr::VRProperties()->SetStringProperty(c, vr::Prop_RegisteredDeviceType_String, "oculus/WMHD315M3010GV");
         vr::VRProperties()->SetFloatProperty(c, vr::Prop_UserIpdMeters_Float, 0.063f);
         vr::VRProperties()->SetFloatProperty(c, vr::Prop_UserHeadToEyeDepthMeters_Float, 0.0f);
         vr::VRProperties()->SetFloatProperty(c, vr::Prop_DisplayFrequency_Float, 60.0f);
@@ -209,8 +211,14 @@ public:
     vr::EVRInitError Activate(uint32_t unObjectId) override {
         vr::PropertyContainerHandle_t c = vr::VRProperties()->TrackedDeviceToPropertyContainer(unObjectId);
         bool is_left = (role_ == vr::TrackedControllerRole_LeftHand);
-        vr::VRProperties()->SetStringProperty(c, vr::Prop_ModelNumber_String, is_left ? "Luna Left Hand" : "Luna Right Hand");
-        vr::VRProperties()->SetStringProperty(c, vr::Prop_ManufacturerName_String, "LunaAI");
+        vr::VRProperties()->SetStringProperty(c, vr::Prop_TrackingSystemName_String, "oculus");
+        vr::VRProperties()->SetStringProperty(
+            c, vr::Prop_ModelNumber_String, is_left ? "Oculus Quest2 (Left Controller)" : "Oculus Quest2 (Right Controller)");
+        vr::VRProperties()->SetStringProperty(c, vr::Prop_ManufacturerName_String, "Oculus");
+        vr::VRProperties()->SetStringProperty(
+            c,
+            vr::Prop_RegisteredDeviceType_String,
+            is_left ? "oculus/WMHD315M3010GV_Controller_Left" : "oculus/WMHD315M3010GV_Controller_Right");
         vr::VRProperties()->SetInt32Property(c, vr::Prop_ControllerRoleHint_Int32, role_);
         vr::VRProperties()->SetUint64Property(c, vr::Prop_CurrentUniverseId_Uint64, 2);
         vr::VRProperties()->SetInt32Property(c, vr::Prop_DeviceClass_Int32, vr::TrackedDeviceClass_Controller);

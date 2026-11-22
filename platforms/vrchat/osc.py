@@ -114,9 +114,8 @@ class VRChatOSC:
             try:
                 if run:
                     self.client.send_message("/input/Run", 1)
-                if not self.use_vr:
-                    for btn in btns:
-                        self.client.send_message(btn, 1)
+                for btn in btns:
+                    self.client.send_message(btn, 1)
                 t0 = time.monotonic()
                 while True:
                     elapsed = time.monotonic() - t0
@@ -136,7 +135,7 @@ class VRChatOSC:
                             elif addr == "/input/LookHorizontal":
                                 turn = val
                         self.vr_tracker.set_locomotion(strafe=strafe, forward=forward, turn=turn)
-                    # Also send OSC /input/* axes so locomotion works whether VRChat uses OpenVR sticks or OSC
+                    # Always send OSC analog axes + digital buttons so movement works in every VRChat input mode
                     for addr, target in axes:
                         self.client.send_message(addr, float(target * scale))
                     await asyncio.sleep(min(0.025, dur - elapsed))
@@ -145,14 +144,13 @@ class VRChatOSC:
                     self.vr_tracker.reset_locomotion()
                 for addr, _ in axes:
                     self.client.send_message(addr, 0.0)
-                if not self.use_vr:
-                    for btn in btns:
-                        self.client.send_message(btn, 0)
+                for btn in btns:
+                    self.client.send_message(btn, 0)
                 if run:
                     self.client.send_message("/input/Run", 0)
 
     async def move(self, vertical: float = 0.0, horizontal: float = 0.0, duration: float = 1.0, run: bool = False):
-        """Walks/strafes cleanly using native VR thumbsticks in SteamVR mode or OSC axes in Desktop mode."""
+        """Walks/strafes cleanly using native VR thumbsticks + OSC analog axes + digital buttons."""
         # Clear any active full-body emote before moving so her legs are never locked in place
         self.set_param("VRCEmote", 0)
         self.set_param("DoingEmote", False)
@@ -163,7 +161,9 @@ class VRChatOSC:
             axes.append(("/input/Vertical", v))
             buttons.append("/input/MoveForward" if v > 0 else "/input/MoveBackward")
         if horizontal:
-            axes.append(("/input/Horizontal", float(max(-1.0, min(1.0, horizontal)))))
+            h = float(max(-1.0, min(1.0, horizontal)))
+            axes.append(("/input/Horizontal", h))
+            buttons.append("/input/MoveRight" if h > 0 else "/input/MoveLeft")
         if not axes:
             return
         await self._ramp_axes(axes, duration, run=run, buttons=buttons)
@@ -173,7 +173,8 @@ class VRChatOSC:
         s = float(max(-1.0, min(1.0, speed)))
         if s == 0.0:
             return
-        await self._ramp_axes([("/input/LookHorizontal", s)], duration)
+        btn = "/input/LookRight" if s > 0 else "/input/LookLeft"
+        await self._ramp_axes([("/input/LookHorizontal", s)], duration, buttons=[btn])
 
     async def jump(self):
         """Taps the jump input (both native Oculus Touch 'A' button and OSC /input/Jump)."""
@@ -543,7 +544,7 @@ def detect_movement_request(text: str) -> tuple[str | None, str | None]:
         return (None, "stick")
 
     # Direct physical locomotion requests
-    if re.search(r"\b(come here|walk forward|step forward|closer|follow me|come to me)\b", low):
+    if re.search(r"\b(come here|walk forward|step forward|closer|follow|follow me|come to me|let'?s go)\b", low):
         return (None, "walk_forward")
     if re.search(r"\b(back up|step back|move back|go back)\b", low):
         return (None, "walk_back")

@@ -238,31 +238,27 @@ class VoiceHandler:
         else:
             style_contour = "neutral"
 
-        data = None
-        sr = 24000
-        # Prefer local Kokoro-82M (`af_heart`) for much livelier prosody + instant synthesis
-        try:
-            if os.path.exists(KOKORO_MODEL):
-                k = await asyncio.to_thread(_get_kokoro)
-                style = k.get_voice_style("af_heart")
-                spd = 0.96 if style_contour == "soft" else (1.08 if style_contour == "excited" else 1.03)
-                data, sr = await asyncio.to_thread(k.create, full_text, style, spd, "en-us")
-                # af_heart is adult pitch (~200 Hz) -> shift +4.5 semitones for Gura/Henya/Baelz range
-                f0_up_key += 4.5
-        except Exception:
-            data = None
+        # Synthesize per-clause with distinct emotional pitch/speed contrast, then concatenate in memory
+        # before running ONE single RVC pass (zero mid-sentence gap + lively multi-tone expression!)
+        clauses = [c.strip() for c in _SENTENCE_SPLIT_RE.split(full_text) if c.strip()] or [full_text]
+        import edge_tts
 
-        if data is None or len(data) == 0:
-            import edge_tts
-            pitch, rate = self._get_neuro_edge_prosody(full_text, emotion=emotion)
-            stamp = int(time.time() * 1000)
-            mp3_p = os.path.join(BASE_DIR, f"temp_rvc_{os.getpid()}_{stamp}.mp3")
-            wav_p = os.path.join(BASE_DIR, f"temp_rvc_{os.getpid()}_{stamp}.wav")
+        async def _fetch_clause_pcm(idx: int, clause: str) -> tuple[np.ndarray, int]:
+            c_pitch, c_rate = self._get_neuro_edge_prosody(clause, emotion=emotion)
+            # Add inter-clause contrast so consecutive sentences never sound same-tone
+            if idx % 2 == 1 and c_pitch == "+8Hz":
+                c_pitch, c_rate = ("+14Hz", "+13%")
+            stamp = f"{os.getpid()}_{int(time.time() * 1000)}_{idx}"
+            mp3_p = os.path.join(BASE_DIR, f"temp_rvc_{stamp}.mp3")
+            wav_p = os.path.join(BASE_DIR, f"temp_rvc_{stamp}.wav")
             try:
-                comm = edge_tts.Communicate(full_text, self.edge_voice, pitch=pitch, rate=rate)
+                comm = edge_tts.Communicate(clause, self.edge_voice, pitch=c_pitch, rate=c_rate)
                 await comm.save(mp3_p)
                 await asyncio.to_thread(mp3_to_wav, mp3_p, wav_p)
-                data, sr = sf.read(wav_p)
+                d, s = sf.read(wav_p)
+                if d.ndim == 2:
+                    d = d[:, 0]
+                return np.asarray(d, dtype=np.float32).ravel(), int(s)
             finally:
                 for p in (mp3_p, wav_p):
                     if os.path.exists(p):
@@ -270,6 +266,17 @@ class VoiceHandler:
                             os.remove(p)
                         except OSError:
                             pass
+
+        parts = await asyncio.gather(*(_fetch_clause_pcm(i, c) for i, c in enumerate(clauses)))
+        sr = parts[0][1] if parts else 48000
+        pause = np.zeros(int(sr * 0.06), dtype=np.float32)
+        joined: list[np.ndarray] = []
+        for i, (arr_c, _) in enumerate(parts):
+            if len(arr_c) > 0:
+                if joined:
+                    joined.append(pause)
+                joined.append(arr_c)
+        data = np.concatenate(joined) if joined else np.zeros(0, dtype=np.float32)
 
         return await asyncio.to_thread(
             conv.convert_to_48k_stereo, data, sr, f0_up_key, protect, style_contour
@@ -380,19 +387,20 @@ class VoiceHandler:
 
     def _get_neuro_edge_prosody(self, clause: str, emotion: str | None = None) -> tuple[str, str]:
         """
-        Native neural pitch (+6Hz..+12Hz) & rate (+5%..+12%) inside Microsoft's neural
-        vocoder for `en-US-AnaNeural` — keeps vocal tract formants 100% natural (zero
-        chipmunk effect!) while giving her Neuro-sama's young age and emotional bounce.
+        Wide per-sentence neural pitch (+3Hz..+20Hz) & rate (+2%..+18%) inside Microsoft's
+        neural vocoder for `en-US-AnaNeural` so clauses have strong emotional contrast.
         """
         em = (emotion or "").lower()
         c = clause.strip()
         if em in ("hug", "blush", "headpat", "boop"):
-            return ("+5Hz", "+4%")
-        if "?!" in c or c.endswith("?"):
-            return ("+11Hz", "+10%")
-        if "!" in c or em in ("sassy_react", "cheer", "clap", "wave", "dance", "point", "stick"):
-            return ("+12Hz", "+12%")
-        return ("+8Hz", "+8%")
+            return ("+3Hz", "+2%")
+        if "?!" in c:
+            return ("+20Hz", "+16%")
+        if c.endswith("?"):
+            return ("+16Hz", "+11%")
+        if "!" in c or em in ("sassy_react", "cheer", "clap", "wave", "dance", "point", "stick", "happy_hop"):
+            return ("+18Hz", "+16%")
+        return ("+8Hz", "+9%")
 
     async def _play_edge_tts(self, text, emotion: str | None = None):
         """

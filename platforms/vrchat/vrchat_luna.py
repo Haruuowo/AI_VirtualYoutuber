@@ -807,8 +807,9 @@ class LunaInVRChat:
             self.world.set_behavior(mode_change, requested_action or mode_change)
             print(f"[autonomy] behavior mode -> {mode_change.upper()}")
 
-        # Turn toward visible avatar while thinking of her reply (no wall staring!)
-        stare_task = asyncio.create_task(self._stare_at_speaker(allow_approach=False))
+        # Turn/approach visible avatar while thinking of her reply (approaches in roam mode!)
+        is_roam = self.world.snapshot()["mode"] == "roam"
+        stare_task = asyncio.create_task(self._stare_at_speaker(allow_approach=is_roam))
 
         # Only call cloud vision when you ask a visual question ("what do you see?", "look at my avatar")
         # or if she hasn't looked in 45s — saves vision tokens and keeps replies fast (<0.8s)!
@@ -929,9 +930,7 @@ class LunaInVRChat:
 
             mode = self.world.snapshot()["mode"]
 
-            # Stay engaged with the person talking to her for 25s before wandering off
-            in_convo = (time.time() - self.last_user_activity) < 25.0
-            if mode == "chill" or in_convo:
+            if mode == "chill":
                 # Stay right in place, turn to keep looking at you, and do stationary expressive idles
                 await self._stare_at_speaker(allow_approach=False)
                 action = random.choices(["cutesy_idle", "stare_smug"], weights=[65, 35], k=1)[0]
