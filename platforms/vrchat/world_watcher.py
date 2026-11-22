@@ -49,18 +49,23 @@ def log_owner(path: Path) -> str | None:
 def pick_luna_log(folder: Path) -> Path | None:
     """
     With two VRChat windows open, both write logs to the same folder.
-    Pick Luna's log:  VRCHAT_LUNA_USER match  >  not VRCHAT_MAIN_USER  >  newest.
+    Pick Luna's log by matching 'Arg: --profile=1' first, then VRCHAT_LUNA_USER.
     """
     if not folder.exists():
         return None
     logs = sorted(folder.glob("output_log_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
-    recent = [p for p in logs if time.time() - p.stat().st_mtime < 6 * 3600][:4] or logs[:1]
+    recent = [p for p in logs if time.time() - p.stat().st_mtime < 6 * 3600][:5] or logs[:1]
     if not recent:
         return None
+    for p in recent:
+        try:
+            head = p.read_text(encoding="utf-8", errors="ignore")[:8000]
+            if "Arg: --profile=1" in head:
+                return p
+        except OSError:
+            pass
     luna_user = os.getenv("VRCHAT_LUNA_USER", "").strip().lower()
     main_user = os.getenv("VRCHAT_MAIN_USER", "").strip().lower()
-    if not luna_user and not main_user:
-        return recent[0]
     owners = [(p, (log_owner(p) or "").lower()) for p in recent]
     for p, owner in owners:
         if luna_user and owner == luna_user:
@@ -72,11 +77,18 @@ def pick_luna_log(folder: Path) -> Path | None:
 
 
 def pick_main_user_log(folder: Path) -> Path | None:
-    """Finds your main VRChat account's log file (e.g. DumAlcoholicPa3)."""
+    """Finds your main VRChat account's log file (Profile 0 / DumAlcoholicPa3)."""
     if not folder.exists():
         return None
-    main_user = os.getenv("VRCHAT_MAIN_USER", "DumAlcoholicPa3").strip().lower()
     logs = sorted(folder.glob("output_log_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)[:5]
+    for p in logs:
+        try:
+            head = p.read_text(encoding="utf-8", errors="ignore")[:8000]
+            if "Arg: --profile=0" in head:
+                return p
+        except OSError:
+            pass
+    main_user = os.getenv("VRCHAT_MAIN_USER", "DumAlcoholicPa3").strip().lower()
     for p in logs:
         owner = (log_owner(p) or "").lower()
         if owner == main_user:
