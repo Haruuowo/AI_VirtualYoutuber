@@ -35,3 +35,5 @@ build/
 
 # Node (run 'npm install' inside platforms/minecraft)
 node_modules/
+
+luna/models/

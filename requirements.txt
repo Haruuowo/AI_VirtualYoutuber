@@ -14,3 +14,4 @@ fastapi
 uvicorn
 python-osc
 ultralytics
+kokoro-onnx

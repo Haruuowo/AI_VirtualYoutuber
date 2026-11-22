@@ -424,7 +424,7 @@ class LunaInVRChat:
             chat_task = asyncio.create_task(self.osc.say(reply))
             move_task = asyncio.create_task(self.osc.perform(chosen_action))
             if self.voice:
-                await asyncio.to_thread(asyncio.run, self.voice.generate_and_play_audio(reply))
+                await self.voice.generate_and_play_audio(reply, emotion=chosen_action)
             await asyncio.gather(chat_task, move_task, return_exceptions=True)
         finally:
             self.osc.vr_tracker.set_speaking(False)
