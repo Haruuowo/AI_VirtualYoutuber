@@ -167,6 +167,36 @@ class VirtualVRPoseController:
             r_x, r_y, r_z =  0.11, 1.26 - wiggle, -0.18
             l_pitch, r_pitch = 60.0, 60.0
 
+        elif act == "hug":
+            # 2-phase 3D VR Hug:
+            # Phase 1 (0..0.85s): Open both arms wide inviting you in
+            # Phase 2 (0.85s+): Lean forward, wrap both arms around you, and sway gently
+            if dt < 0.85:
+                p = dt / 0.85
+                h_roll = _lerp(0.0, 10.0, p)
+                h_pitch = _lerp(0.0, 4.0, p)
+                l_x, l_y, l_z = _lerp(-0.22, -0.38, p), _lerp(0.88, 1.18, p), _lerp(-0.14, -0.26, p)
+                r_x, r_y, r_z = _lerp( 0.22,  0.38, p), _lerp(0.88, 1.18, p), _lerp(-0.14, -0.26, p)
+                l_pitch, r_pitch = 25.0, 25.0
+                l_yaw, r_yaw = 20.0, -20.0
+            else:
+                wrap_p = min(1.0, (dt - 0.85) / 0.55)
+                cuddle_sway = math.sin((dt - 0.85) * 3.2) * 0.025
+                h_x = cuddle_sway
+                h_z = _lerp(-0.02, -0.10, wrap_p)
+                h_pitch = _lerp(4.0, -6.0, wrap_p)
+                h_roll = 14.0 + cuddle_sway * 180.0
+                l_x = _lerp(-0.38, -0.09, wrap_p) + cuddle_sway
+                r_x = _lerp( 0.38,  0.09, wrap_p) + cuddle_sway
+                l_y = _lerp(1.18, 1.16, wrap_p)
+                r_y = _lerp(1.18, 1.14, wrap_p)
+                l_z = _lerp(-0.26, -0.44, wrap_p)
+                r_z = _lerp(-0.26, -0.44, wrap_p)
+                l_pitch, r_pitch = 20.0, 20.0
+                l_yaw = _lerp(20.0, -45.0, wrap_p)
+                r_yaw = _lerp(-20.0, 45.0, wrap_p)
+                l_roll, r_roll = -15.0, 15.0
+
         elif act == "boop":
             # Reach right hand out to boop your nose
             reach = math.sin(min(1.0, dt / 1.5) * math.pi) * 0.18

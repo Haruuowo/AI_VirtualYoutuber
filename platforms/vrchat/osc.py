@@ -246,7 +246,7 @@ class VRChatOSC:
     async def perform(self, action: str):
         """Executes a named physical behavior, locomotion step, 6-DOF VR arm/head pose, or hand emote."""
         # Trigger matching 6-DOF VR Head & Hand pose in driver_luna.dll (if running in VR mode)
-        pose_dur = 5.5 if action == "dance" else 2.6
+        pose_dur = 5.5 if action == "dance" else (3.8 if action == "hug" else 2.6)
         self.vr_tracker.trigger_pose(action, duration=pose_dur)
 
         if action == "stop":
@@ -289,6 +289,15 @@ class VRChatOSC:
             self.set_param("Headpat", True)
             await asyncio.sleep(2.2)
             self.set_param("Headpat", False)
+
+        elif action == "hug":
+            # Opens arms wide while stepping in close, then wraps both 3D VR arms around you with a warm blush
+            self.apply_cutesy_smug_face(blush=0.95, happy=True, sleepy_smug=True, emotion_idx=2, exp_mod_l=True, exp_mod_r=True)
+            self.set_param("Headpat", True)
+            await self.move(vertical=0.65, duration=0.80)
+            await asyncio.sleep(2.8)
+            self.set_param("Headpat", False)
+            self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=True, emotion_idx=1)
 
         elif action == "boop":
             self.apply_cutesy_smug_face(blush=0.75, happy=True, sleepy_smug=False, emotion_idx=4, exp_mod_r=True)
@@ -411,6 +420,8 @@ class VRChatOSC:
             return random.choice(["clap", "cheer", "stare_smug"])
         if any(w in low for w in ("dance", "vibe", "music", "groove", "party", "watch and learn")):
             return "dance"
+        if any(w in low for w in ("hug", "cuddle", "come here", "three seconds")):
+            return "hug"
         if any(w in low for w in ("stick", "bonk", "weapon", "hit", "poke")):
             return "stick"
         if any(w in low for w in ("excuse", "rude", "what?", "who?", "fault", "blame", "shut", "unplug", "npc")):
@@ -458,6 +469,8 @@ def detect_movement_request(text: str) -> tuple[str | None, str | None]:
         return (None, "sad_kick")
     if re.search(r"\b(headpat|pat your head|good girl)\b", low):
         return (None, "headpat")
+    if re.search(r"\b(hug|hug me|give me a hug|cuddle|hold me|come hug)\b", low):
+        return (None, "hug")
     if re.search(r"\b(boop|poke your nose)\b", low):
         return (None, "boop")
     if re.search(r"\b(stick|sticc|bonk|pull out your stick)\b", low):
