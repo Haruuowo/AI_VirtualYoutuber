@@ -112,9 +112,9 @@ class VRChatOSC:
         btns = buttons or []
         async with self._move_lock:
             try:
+                if run:
+                    self.client.send_message("/input/Run", 1)
                 if not self.use_vr:
-                    if run:
-                        self.client.send_message("/input/Run", 1)
                     for btn in btns:
                         self.client.send_message(btn, 1)
                 t0 = time.monotonic()
@@ -136,20 +136,20 @@ class VRChatOSC:
                             elif addr == "/input/LookHorizontal":
                                 turn = val
                         self.vr_tracker.set_locomotion(strafe=strafe, forward=forward, turn=turn)
-                    else:
-                        for addr, target in axes:
-                            self.client.send_message(addr, float(target * scale))
+                    # Also send OSC /input/* axes so locomotion works whether VRChat uses OpenVR sticks or OSC
+                    for addr, target in axes:
+                        self.client.send_message(addr, float(target * scale))
                     await asyncio.sleep(min(0.025, dur - elapsed))
             finally:
                 if self.use_vr:
                     self.vr_tracker.reset_locomotion()
-                else:
-                    for addr, _ in axes:
-                        self.client.send_message(addr, 0.0)
+                for addr, _ in axes:
+                    self.client.send_message(addr, 0.0)
+                if not self.use_vr:
                     for btn in btns:
                         self.client.send_message(btn, 0)
-                    if run:
-                        self.client.send_message("/input/Run", 0)
+                if run:
+                    self.client.send_message("/input/Run", 0)
 
     async def move(self, vertical: float = 0.0, horizontal: float = 0.0, duration: float = 1.0, run: bool = False):
         """Walks/strafes cleanly using native VR thumbsticks in SteamVR mode or OSC axes in Desktop mode."""
@@ -176,15 +176,14 @@ class VRChatOSC:
         await self._ramp_axes([("/input/LookHorizontal", s)], duration)
 
     async def jump(self):
-        """Taps the jump input (native Oculus Touch 'A' button in VR mode or OSC /input/Jump)."""
+        """Taps the jump input (both native Oculus Touch 'A' button and OSC /input/Jump)."""
         if self.use_vr:
             self.vr_tracker.set_locomotion(jump=True)
-            await asyncio.sleep(0.15)
+        self.client.send_message("/input/Jump", 1)
+        await asyncio.sleep(0.15)
+        if self.use_vr:
             self.vr_tracker.set_locomotion(jump=False)
-        else:
-            self.client.send_message("/input/Jump", 1)
-            await asyncio.sleep(0.15)
-            self.client.send_message("/input/Jump", 0)
+        self.client.send_message("/input/Jump", 0)
 
     # ── Avatar parameters, Hand Emotes & Cutesy-Smug Facial Expressions ────
 

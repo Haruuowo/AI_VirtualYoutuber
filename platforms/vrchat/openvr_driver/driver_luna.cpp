@@ -365,19 +365,24 @@ public:
         hmd_   = std::make_unique<LunaHMDDriver>();
         left_  = std::make_unique<LunaControllerDriver>(vr::TrackedControllerRole_LeftHand);
         right_ = std::make_unique<LunaControllerDriver>(vr::TrackedControllerRole_RightHand);
-        waist_ = std::make_unique<LunaTrackerDriver>(
-            "Luna Waist Tracker", "{htc}/input/tracker/vive_tracker_waist_profile.json", "vive_tracker_waist", &g_waist_pose);
-        lfoot_ = std::make_unique<LunaTrackerDriver>(
-            "Luna Left Foot Tracker", "{htc}/input/tracker/vive_tracker_left_foot_profile.json", "vive_tracker_left_foot", &g_lfoot_pose);
-        rfoot_ = std::make_unique<LunaTrackerDriver>(
-            "Luna Right Foot Tracker", "{htc}/input/tracker/vive_tracker_right_foot_profile.json", "vive_tracker_right_foot", &g_rfoot_pose);
 
         vr::VRServerDriverHost()->TrackedDeviceAdded("LUNA-HMD-001", vr::TrackedDeviceClass_HMD, hmd_.get());
         vr::VRServerDriverHost()->TrackedDeviceAdded("LUNA-CTRL-L", vr::TrackedDeviceClass_Controller, left_.get());
         vr::VRServerDriverHost()->TrackedDeviceAdded("LUNA-CTRL-R", vr::TrackedDeviceClass_Controller, right_.get());
-        vr::VRServerDriverHost()->TrackedDeviceAdded("LUNA-TRK-WAIST", vr::TrackedDeviceClass_GenericTracker, waist_.get());
-        vr::VRServerDriverHost()->TrackedDeviceAdded("LUNA-TRK-LFOOT", vr::TrackedDeviceClass_GenericTracker, lfoot_.get());
-        vr::VRServerDriverHost()->TrackedDeviceAdded("LUNA-TRK-RFOOT", vr::TrackedDeviceClass_GenericTracker, rfoot_.get());
+
+        // Only spawn FBT trackers when LUNA_ENABLE_FBT=1 (otherwise VRChat stays in uncalibrated SixPoint FBT wait)
+        const char* fbt_env = std::getenv("LUNA_ENABLE_FBT");
+        if (fbt_env && std::strcmp(fbt_env, "1") == 0) {
+            waist_ = std::make_unique<LunaTrackerDriver>(
+                "Luna Waist Tracker", "{htc}/input/tracker/vive_tracker_waist_profile.json", "vive_tracker_waist", &g_waist_pose);
+            lfoot_ = std::make_unique<LunaTrackerDriver>(
+                "Luna Left Foot Tracker", "{htc}/input/tracker/vive_tracker_left_foot_profile.json", "vive_tracker_left_foot", &g_lfoot_pose);
+            rfoot_ = std::make_unique<LunaTrackerDriver>(
+                "Luna Right Foot Tracker", "{htc}/input/tracker/vive_tracker_right_foot_profile.json", "vive_tracker_right_foot", &g_rfoot_pose);
+            vr::VRServerDriverHost()->TrackedDeviceAdded("LUNA-TRK-WAIST", vr::TrackedDeviceClass_GenericTracker, waist_.get());
+            vr::VRServerDriverHost()->TrackedDeviceAdded("LUNA-TRK-LFOOT", vr::TrackedDeviceClass_GenericTracker, lfoot_.get());
+            vr::VRServerDriverHost()->TrackedDeviceAdded("LUNA-TRK-RFOOT", vr::TrackedDeviceClass_GenericTracker, rfoot_.get());
+        }
 
         running_ = true;
         udp_thread_ = std::thread(&LunaDeviceProvider::UdpLoop, this);
