@@ -372,6 +372,7 @@ class LunaInVRChat:
         self._muted_luna_pids: set[int] = set()
         self._recent_self_replies: list[str] = []
         self._seen_chatboxes: dict[str, float] = {}
+        self._last_speak_end_ts: float = 0.0
         # VRChat Talk-Gate Toggle: when True, Luna ONLY hears you when you talk in VRChat (Hold V or unmute in VRChat).
         # Press F8 anytime (or type 'toggle' in console) to switch between VRC-Talk-Only and Always-Listen!
         self.vrc_talk_only = not getattr(args, "always_listen", False)
@@ -565,8 +566,8 @@ class LunaInVRChat:
             daemon=True,
         ).start()
 
-        # Only open a 2nd listener if VRCHAT_WORLD_LISTEN_DEVICE or --world-ears is explicitly set
-        # (Opening a disabled Stereo Mix endpoint causes PyAudio to call Pa_Terminate() and crash PortAudio)
+        # Only open a 2nd SpeechRecognition listener if VRCHAT_WORLD_LISTEN_DEVICE or --world-ears is explicitly set;
+        # otherwise use non-blocking Windows WASAPI Loopback (`pyaudiowpatch`) on your default output automatically!
         world_dev = (getattr(self.args, "world_ears", None) or os.getenv("VRCHAT_WORLD_LISTEN_DEVICE", "")).strip()
         if world_dev:
             threading.Thread(
@@ -574,6 +575,111 @@ class LunaInVRChat:
                 args=(world_dev, "VRChat Player", "world-ears"),
                 daemon=True,
             ).start()
+        elif sys.platform == "win32":
+            threading.Thread(
+                target=self._start_wasapi_loopback_listener,
+                daemon=True,
+            ).start()
+
+    def _start_wasapi_loopback_listener(self):
+        """
+        Automatically captures friends' voices from your default Windows output (Headphones/Speakers)
+        via non-blocking WASAPI Loopback (`pyaudiowpatch`) — no Voicemeeter or extra cables needed!
+        Ignores audio while Luna is speaking (+1.6s cooldown) so she never echoes herself.
+        """
+        try:
+            import queue
+            import numpy as np
+            import pyaudiowpatch as pyaudio
+            import speech_recognition as sr
+
+            pa = pyaudio.PyAudio()
+            try:
+                wasapi_info = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
+                default_out = pa.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
+                loopback = None
+                for lb in pa.get_loopback_device_info_generator():
+                    if default_out["name"] in lb["name"]:
+                        loopback = lb
+                        break
+                if loopback is None:
+                    print("[world-ears] No WASAPI loopback device found; skipping auto world-ears.")
+                    return
+
+                rate = int(loopback["defaultSampleRate"])
+                channels = min(2, max(1, int(loopback["maxInputChannels"])))
+                utt_q: queue.Queue[bytes] = queue.Queue(maxsize=4)
+                buf: list[np.ndarray] = []
+                in_speech = False
+                last_voice_ts = 0.0
+                speech_start_ts = 0.0
+
+                def _cb(in_data, _frame_count, _time_info, _status):
+                    nonlocal buf, in_speech, last_voice_ts, speech_start_ts
+                    now = time.time()
+                    if self.speaking or (now - self._last_speak_end_ts < 1.6):
+                        buf.clear()
+                        in_speech = False
+                        return (None, pyaudio.paContinue)
+                    arr = np.frombuffer(in_data, dtype=np.int16)
+                    if channels > 1:
+                        arr = arr.reshape(-1, channels).mean(axis=1).astype(np.int16)
+                    rms = float(np.sqrt(np.mean((arr.astype(np.float32) / 32768.0) ** 2))) if len(arr) else 0.0
+                    if rms > 0.012:
+                        if not in_speech:
+                            in_speech = True
+                            speech_start_ts = now
+                            buf.clear()
+                        last_voice_ts = now
+                        buf.append(arr)
+                    elif in_speech:
+                        buf.append(arr)
+                        if (now - last_voice_ts >= 0.55) or (now - speech_start_ts >= 7.0):
+                            if len(buf) >= 4:
+                                pcm = np.concatenate(buf).tobytes()
+                                try:
+                                    utt_q.put_nowait(pcm)
+                                except queue.Full:
+                                    pass
+                            buf.clear()
+                            in_speech = False
+                    return (None, pyaudio.paContinue)
+
+                stream = pa.open(
+                    format=pyaudio.paInt16,
+                    channels=channels,
+                    rate=rate,
+                    frames_per_buffer=2048,
+                    input=True,
+                    input_device_index=loopback["index"],
+                    stream_callback=_cb,
+                )
+                stream.start_stream()
+                print(f"[world-ears] Auto-listening to VRChat friends via WASAPI Loopback: '{loopback['name']}'")
+
+                while True:
+                    pcm = utt_q.get()
+                    if self.speaking or (time.time() - self._last_speak_end_ts < 1.6):
+                        continue
+                    try:
+                        audio_data = sr.AudioData(pcm, sample_rate=rate, sample_width=2)
+                        text = self._transcribe_audio(None, audio_data)
+                        if not text:
+                            continue
+                        norm = "".join(ch for ch in text.lower() if ch.isalnum())
+                        if norm and any(norm in r or r in norm for r in self._recent_self_replies):
+                            continue
+                        players = [p for p in self.world.snapshot()["players"] if p.lower() != HOST_NAME.lower()]
+                        who = f"Nearby Player ({', '.join(players[:2])})" if players else "VRChat Friend"
+                        print(f"\n[world-ears heard {who}] {text}")
+                        self.osc.typing(True)
+                        self.push(who, text, True)
+                    except Exception:
+                        pass
+            finally:
+                pa.terminate()
+        except Exception as e:
+            print(f"[world-ears] WASAPI loopback unavailable: {e}")
 
     # ── Core Speech + Body Coordinator ─────────────────────────────────────
 
@@ -638,7 +744,8 @@ class LunaInVRChat:
                 await asyncio.sleep(0.45)
                 self.osc.client.send_message("/input/Voice", 0)
             self.speaking = False
-            self.last_activity = time.time()
+            self._last_speak_end_ts = time.time()
+            self.last_activity = self._last_speak_end_ts
 
     async def _stare_at_speaker(self, allow_approach: bool = False) -> bool:
         """
@@ -943,7 +1050,13 @@ class LunaInVRChat:
         ear_mode_lbl = "VRC TALK ONLY (Hold V in VRChat | Press F8 to toggle)" if self.vrc_talk_only else "ALWAYS LISTEN (Open Mic | Press F8 to toggle)"
         print(f"  Ears      : {'ON [' + ear_mode_lbl + ']' if self.args.listen else 'OFF (use --listen)'}")
         world_dev = (getattr(self.args, "world_ears", None) or os.getenv("VRCHAT_WORLD_LISTEN_DEVICE", "")).strip()
-        print(f"  World Ears: {'ON (' + world_dev + ')' if (self.args.listen and world_dev) else 'OFF (set VRCHAT_WORLD_LISTEN_DEVICE or --world-ears)'}")
+        if not self.args.listen:
+            we_lbl = "OFF (use --listen)"
+        elif world_dev:
+            we_lbl = f"ON ({world_dev})"
+        else:
+            we_lbl = "ON (Auto WASAPI Loopback on default speakers/headphones)"
+        print(f"  World Ears: {we_lbl}")
         print("=" * 64)
         print("Tip: Hold 'V' in VRChat to talk to Luna, or press 'F8' (or type 'toggle') to switch to Always-Listen!")
         print("Type below (or speak into your mic) to talk to Luna. Type 'quit' to exit.\n")

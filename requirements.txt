@@ -18,3 +18,4 @@ kokoro-onnx
 pycaw
 psutil
 rapidocr-onnxruntime
+pyaudiowpatch
