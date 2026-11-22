@@ -157,29 +157,27 @@ class RVCv2Converter:
         if f0_up_key != 0.0:
             f0 = f0 * (2.0 ** (float(f0_up_key) / 12.0))
 
-        # Add strong VTuber pitch dynamics on voiced frames so RVC never sounds flat/monotone
+        # Smooth 3-frame median filter on voiced F0 to eliminate octave-jump voice cracks!
         voiced = f0 > 0.0
         if np.any(voiced):
             idx_v = np.flatnonzero(voiced)
+            if len(idx_v) >= 3:
+                f0[idx_v] = scipy.signal.medfilt(f0[idx_v], kernel_size=3)
             prog = np.linspace(0.0, 1.0, len(idx_v), dtype=np.float32)
-            # Amplify natural pitch inflection around speaker median (1.65x dynamic range)
-            med_f0 = float(np.median(f0[voiced]))
-            f0[voiced] = np.clip(med_f0 + (f0[voiced] - med_f0) * 1.65, 75.0, 680.0)
+            # Clean, crack-free emotional pitch dynamics (1.28x natural range, clamped to 155..410 Hz)
+            med_f0 = float(np.median(f0[idx_v]))
+            f0[idx_v] = np.clip(med_f0 + (f0[idx_v] - med_f0) * 1.28, 155.0, 410.0)
             if style_contour == "question":
-                # Pronounced rising question inflection (+3.5 semitones at phrase end)
-                semi_curve = -0.6 + 3.8 * (prog ** 2.0) + 0.9 * np.sin(prog * np.pi * 3.0)
+                semi_curve = -0.3 + 2.0 * (prog ** 2.2)
             elif style_contour == "excited":
-                # High-energy bouncy VTuber pitch contour (+2.8 semitones)
-                semi_curve = 1.0 + 2.2 * np.sin(prog * np.pi * 3.5) + 0.8 * np.cos(prog * np.pi * 7.0)
+                semi_curve = 0.4 + 1.1 * np.sin(prog * np.pi * 2.5)
             elif style_contour == "soft":
-                # Warm, gentle rise-fall lilt
-                semi_curve = 1.4 * np.sin(prog * np.pi) - 0.5
+                semi_curve = 0.9 * np.sin(prog * np.pi) - 0.4
             elif style_contour == "smug":
-                # Sassy drop-then-smirk inflection
-                semi_curve = -1.4 * np.sin(prog * np.pi * 1.3) + 2.2 * (prog ** 1.8)
+                semi_curve = -0.8 * np.sin(prog * np.pi) + 1.2 * (prog ** 1.8)
             else:
-                semi_curve = 1.2 * np.sin(prog * np.pi * 2.5)
-            f0[idx_v] = np.clip(f0[idx_v] * (2.0 ** (semi_curve / 12.0)), 75.0, 680.0)
+                semi_curve = 0.6 * np.sin(prog * np.pi * 1.8)
+            f0[idx_v] = np.clip(f0[idx_v] * (2.0 ** (semi_curve / 12.0)), 155.0, 410.0)
 
         f0bak = f0.copy().astype(np.float32)
         f0_mel = 1127.0 * np.log(1.0 + f0 / 700.0)

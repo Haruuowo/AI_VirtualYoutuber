@@ -234,8 +234,8 @@ def detect_avatars_yolo(img: Image.Image) -> list[tuple[float, float, float, flo
     results = model.predict(
         np.asarray(img),
         classes=[0, 15, 16, 77],
-        conf=0.18,
-        imgsz=384,
+        conf=0.12,
+        imgsz=480,
         verbose=False,
     )
     boxes: list[tuple[float, float, float, float, float]] = []
@@ -255,9 +255,52 @@ def detect_avatars_yolo(img: Image.Image) -> list[tuple[float, float, float, flo
     return boxes
 
 
+def _detect_vrchat_nametag_offset(img: Image.Image) -> tuple[bool, float, float]:
+    """
+    Fallback player detector when YOLOv8 misses dark-clothed anime avatars:
+    spots VRChat's glowing golden/blue/green/white floating nametag pill in the upper
+    65% of the frame and returns (found, horiz_offset, est_height_ratio).
+    """
+    try:
+        arr = np.asarray(img)
+        h, w, _ = arr.shape
+        roi = arr[int(h * 0.08):int(h * 0.65), :, :]
+        hsv = cv2.cvtColor(roi, cv2.COLOR_RGB2HSV)
+        # VRChat friend nametags glow bright yellow/gold, cyan/blue, or green on dark translucent pill
+        mask_gold = cv2.inRange(hsv, np.array([15, 110, 150]), np.array([38, 255, 255]))
+        mask_cyan = cv2.inRange(hsv, np.array([85, 100, 150]), np.array([125, 255, 255]))
+        mask = cv2.bitwise_or(mask_gold, mask_cyan)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 3))
+        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        best = None
+        best_area = 0.0
+        for cnt in contours:
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            if bw < 28 or bh < 8 or bh > h * 0.16:
+                continue
+            aspect = bw / float(max(1, bh))
+            if aspect < 2.0 or aspect > 12.0:
+                continue
+            area = float(bw * bh)
+            if area > best_area:
+                best_area = area
+                best = (x, y, bw, bh)
+        if best is not None:
+            x, y, bw, bh = best
+            cx = x + bw / 2.0
+            offset = (cx - (w / 2.0)) / (w / 2.0)
+            est_h = min(0.85, max(0.25, (bw / float(w)) * 2.4))
+            return (True, float(max(-1.0, min(1.0, offset))), float(est_h))
+    except Exception:
+        pass
+    return (False, 0.0, 0.0)
+
+
 def track_target_person(img: Image.Image) -> tuple[bool, float, float]:
     """
-    Finds the closest avatar/person in Luna's VRChat camera view using YOLOv8-nano.
+    Finds the closest avatar/person in Luna's VRChat camera view using YOLOv8-nano,
+    with a VRChat glowing nametag pill fallback for dark/stylized anime avatars.
     Returns (found, offset, height_ratio):
         found:        True only when an actual character/person is visible (never walls/posters!)
         offset:       [-1.0 left .. 0.0 center .. +1.0 right]
@@ -266,9 +309,9 @@ def track_target_person(img: Image.Image) -> tuple[bool, float, float]:
     try:
         boxes = detect_avatars_yolo(img)
     except Exception:
-        return (False, 0.0, 0.0)
+        boxes = []
     if not boxes:
-        return (False, 0.0, 0.0)
+        return _detect_vrchat_nametag_offset(img)
 
     w, h = img.size
     x1, y1, x2, y2, _ = boxes[0]

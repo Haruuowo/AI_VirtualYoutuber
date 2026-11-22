@@ -387,20 +387,22 @@ class VoiceHandler:
 
     def _get_neuro_edge_prosody(self, clause: str, emotion: str | None = None) -> tuple[str, str]:
         """
-        Wide per-sentence neural pitch (+3Hz..+20Hz) & rate (+2%..+18%) inside Microsoft's
-        neural vocoder for `en-US-AnaNeural` so clauses have strong emotional contrast.
+        Clean, crack-free emotional pitch (+2Hz..+13Hz) & rate (+2%..+13%) contrast per clause
+        so Gura RVC v2 sounds lively and expressive without squeaking or voice-cracking.
         """
         em = (emotion or "").lower()
         c = clause.strip()
         if em in ("hug", "blush", "headpat", "boop"):
-            return ("+3Hz", "+2%")
+            return ("+2Hz", "+2%")
         if "?!" in c:
-            return ("+20Hz", "+16%")
+            return ("+13Hz", "+12%")
         if c.endswith("?"):
-            return ("+16Hz", "+11%")
-        if "!" in c or em in ("sassy_react", "cheer", "clap", "wave", "dance", "point", "stick", "happy_hop"):
-            return ("+18Hz", "+16%")
-        return ("+8Hz", "+9%")
+            return ("+11Hz", "+9%")
+        if "!" in c or em in ("sassy_react", "cheer", "clap", "wave", "dance", "happy_hop"):
+            return ("+12Hz", "+13%")
+        if em in ("stare_smug", "point", "stick"):
+            return ("+5Hz", "+6%")
+        return ("+7Hz", "+8%")
 
     async def _play_edge_tts(self, text, emotion: str | None = None):
         """

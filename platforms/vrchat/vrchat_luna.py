@@ -768,10 +768,10 @@ class LunaInVRChat:
 
     async def _stare_at_speaker(self, allow_approach: bool = False) -> bool:
         """
-        Uses local YOLOv8-nano (<20ms, 0 API tokens) to spot an actual avatar in view
-        and turn Luna cleanly toward them. Never locks onto walls or posters!
+        Uses local YOLOv8-nano + VRChat nametag pill detector (<30ms, 0 API tokens)
+        to spot an actual player in view and aim Luna's 3D VR head & body at them.
         """
-        frame = await asyncio.to_thread(capture_luna_vrchat_frame)
+        frame = await asyncio.to_thread(capture_luna_vrchat_frame, 640, 360, False)
         if frame is None:
             self.osc.apply_cutesy_smug_face(blush=0.4, happy=True)
             return False
@@ -788,8 +788,8 @@ class LunaInVRChat:
             self.osc.apply_cutesy_smug_face(blush=0.45, happy=True)
             self.osc.set_eyes(pitch=-2.0, yaw=float(offset * 16.0), closed=0.16)
 
-        if allow_approach and height_ratio < 0.52 and abs(offset) <= 0.30:
-            await self.osc.move(vertical=0.85, duration=1.4)
+        if allow_approach and height_ratio < 0.45 and abs(offset) <= 0.30:
+            await self.osc.move(vertical=0.80, duration=1.1)
 
         return True
 
@@ -935,17 +935,21 @@ class LunaInVRChat:
                 await self._stare_at_speaker(allow_approach=False)
                 action = random.choices(["cutesy_idle", "stare_smug"], weights=[65, 35], k=1)[0]
             else:
-                frame = await asyncio.to_thread(capture_luna_vrchat_frame)
-                if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
-                    action = random.choice(["turn_left", "turn_right"])
-                    print(f"[eyes] wall ahead (OpenCV) -> {action}")
+                # If a player is visible in front of her, stay locked onto them instead of wandering away!
+                saw_player = await self._stare_at_speaker(allow_approach=True)
+                if saw_player:
+                    action = random.choices(["stare_smug", "cutesy_idle"], weights=[55, 45], k=1)[0]
                 else:
-                    await self._stare_at_speaker(allow_approach=True)
-                    action = random.choices(
-                        ["wander_step", "curious_approach", "cutesy_idle", "look_around"],
-                        weights=[45, 25, 15, 15],
-                        k=1,
-                    )[0]
+                    frame = await asyncio.to_thread(capture_luna_vrchat_frame)
+                    if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
+                        action = random.choice(["turn_left", "turn_right"])
+                        print(f"[eyes] wall ahead (OpenCV) -> {action}")
+                    else:
+                        action = random.choices(
+                            ["turn_left", "turn_right", "wander_step", "look_around"],
+                            weights=[30, 30, 25, 15],
+                            k=1,
+                        )[0]
 
             self.world.record_action(action)
             try:
