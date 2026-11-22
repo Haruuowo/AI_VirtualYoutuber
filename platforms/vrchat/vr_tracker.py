@@ -189,11 +189,11 @@ class VirtualVRPoseController:
         sway_x = _organic(t, 0.7) * 0.030
         sway_z = _organic(t, 2.3) * 0.014
 
-        # Natural living idle pose: 2D gaze (yaw + pitch) + subtle organic head micro-motion
+        # Natural calm idle pose: 2D gaze (yaw + pitch) + gentle organic head micro-motion
         h_x, h_y, h_z = sway_x, 1.68 + breath, sway_z
-        h_pitch = self.gaze_pitch_deg + _organic(t, 1.4) * 3.8
-        h_yaw = self.gaze_yaw_deg + _organic(t, 3.1) * 5.0
-        h_roll = _organic(t, 4.9) * 7.5 + sway_x * 90.0
+        h_pitch = self.gaze_pitch_deg + _organic(t, 1.4) * 2.4
+        h_yaw = self.gaze_yaw_deg + _organic(t, 3.1) * 2.6
+        h_roll = _organic(t, 4.9) * 4.5 + sway_x * 65.0
 
         # Relaxed natural arms at waist/hip height with subtle asymmetric breathing & weight-shift follow
         l_x = -0.23 + sway_x * 0.65 + _organic(t, 5.2) * 0.014
@@ -360,10 +360,10 @@ class VirtualVRPoseController:
             self._smooth_state = list(target)
         else:
             dt_frame = max(0.001, min(0.10, t - self._last_pose_t))
-            # Natural biomechanical speeds: responsive neck gaze, fluid arm arcs, gentle torso sway
-            a_pos = 1.0 - math.exp(-dt_frame * 5.2)
-            a_head_rot = 1.0 - math.exp(-dt_frame * 7.8)
-            a_arm = 1.0 - math.exp(-dt_frame * 6.5)
+            # Natural relaxed biomechanical speeds: smooth neck glide, weighted arm arcs, gentle torso sway
+            a_pos = 1.0 - math.exp(-dt_frame * 4.2)
+            a_head_rot = 1.0 - math.exp(-dt_frame * 5.6)
+            a_arm = 1.0 - math.exp(-dt_frame * 5.0)
             alphas = (
                 a_pos, a_pos, a_pos, a_head_rot, a_head_rot, a_head_rot,
                 a_arm, a_arm, a_arm, a_arm, a_arm, a_arm,

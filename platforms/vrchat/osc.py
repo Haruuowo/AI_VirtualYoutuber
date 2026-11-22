@@ -49,6 +49,9 @@ class VRChatOSC:
         self.use_vr = bool(use_vr)
         self.client = SimpleUDPClient(self.host, self.port)
         self._move_lock = asyncio.Lock()
+        self._last_eye_pitch = -1.5
+        self._last_eye_yaw = 0.0
+        self._last_eye_closed = 0.12
         # 60 Hz 6-DOF Virtual VR Head + Left/Right Hands + Joystick streamer (UDP 127.0.0.1:27015 -> driver_luna.dll)
         self.vr_tracker = VirtualVRPoseController()
         self.vr_tracker.start()
@@ -224,30 +227,32 @@ class VRChatOSC:
         """Drives an avatar parameter, e.g. VRCEmote or custom gesture toggle."""
         self.client.send_message(f"/avatar/parameters/{name}", value)
 
-    def set_eyes(self, pitch: float = 0.0, yaw: float = 0.0, closed: float = 0.18):
+    def set_eyes(self, pitch: float = 0.0, yaw: float = 0.0, closed: float = 0.14):
         """
-        Drives VRChat native OSC eye tracking so her eyes lock onto you or do smug glances.
-        pitch/yaw in degrees (-25..25), closed in [0.0..1.0] (0.18 = half-lidded smug look).
+        Drives VRChat native OSC eye tracking so her eyes lock onto you smoothly.
+        pitch/yaw in degrees (-25..25), closed in [0.0..1.0].
         """
-        self.client.send_message("/tracking/eye/LeftRightPitchYaw", [float(pitch), float(yaw), float(pitch), float(yaw)])
-        self.client.send_message("/tracking/eye/EyesClosedAmount", float(max(0.0, min(1.0, closed))))
+        self._last_eye_pitch = float(pitch)
+        self._last_eye_yaw = float(yaw)
+        self._last_eye_closed = float(max(0.0, min(1.0, closed)))
+        self.client.send_message(
+            "/tracking/eye/LeftRightPitchYaw",
+            [self._last_eye_pitch, self._last_eye_yaw, self._last_eye_pitch, self._last_eye_yaw],
+        )
+        self.client.send_message("/tracking/eye/EyesClosedAmount", self._last_eye_closed)
 
     def apply_cutesy_smug_face(
         self,
-        blush: float = 0.45,
+        blush: float = 0.35,
         happy: bool = True,
-        sleepy_smug: bool = True,
+        sleepy_smug: bool = False,
         emotion_idx: int = 1,
         exp_mod_l: bool = True,
         exp_mod_r: bool = False,
     ):
         """
-        Applies facial expressions tailored specifically to Luna's 'Colibri Blind' avatar
-        (plus standard VRChat SDK3 fallback parameters):
-          - BlushLock=True + Blush float (Colibri resets Blush to 0 unless BlushLock is True!)
-          - Emotion & EmotionIDX (0..7) + ExpModL / ExpModR expression modifiers
-          - Sleepy=True for her signature half-lidded smug eyes
-          - BlinkEnabled=True so her custom eyelid blinker stays active
+        Applies a steady, natural facial expression to Luna's 'Colibri Blind' avatar
+        without snapping her eye gaze back to center.
         """
         b_val = float(max(0.0, min(1.0, blush)))
         self.set_param("BlushLock", b_val > 0.05)
@@ -255,41 +260,38 @@ class VRChatOSC:
         self.set_param("Happy", bool(happy))
         self.set_param("Sleepy", bool(sleepy_smug))
         self.set_param("BlinkEnabled", True)
-        # Colibri Blind expression selectors & modifiers (do NOT force EmotionIDX or DoingEmote externally)
         self.set_param("ExpModL", bool(exp_mod_l))
         self.set_param("ExpModR", bool(exp_mod_r))
         self.set_param("Emotion", int(emotion_idx))
-        # Standard BlendTree facial expression fallback
-        self.set_param("VRCFaceBlendH", 0.55 if happy else -0.4)
-        self.set_param("VRCFaceBlendV", 0.35 if sleepy_smug else 0.0)
-        self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.22 if sleepy_smug else 0.14)
+        self.set_param("VRCFaceBlendH", 0.50 if happy else -0.35)
+        self.set_param("VRCFaceBlendV", 0.20 if sleepy_smug else 0.0)
 
     async def trigger_colibri_blink(self):
-        """Triggers Colibri Blind's custom /avatar/parameters/Blink eyelid animation."""
+        """Natural eyelid blink that preserves Luna's current eye gaze direction."""
+        p, y, prev_c = self._last_eye_pitch, self._last_eye_yaw, self._last_eye_closed
         self.set_param("Blink", True)
-        self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.88)
-        await asyncio.sleep(0.14)
+        self.set_eyes(pitch=p, yaw=y, closed=0.90)
+        await asyncio.sleep(0.13)
         self.set_param("Blink", False)
-        self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.18)
+        self.set_eyes(pitch=p, yaw=y, closed=prev_c)
 
     async def lock_gaze_on_offset(self, offset: float, offset_y: float = 0.0):
         """
-        Natural Eye -> Head -> Body gaze tracking toward (offset_x, offset_y):
+        Calm Eye -> Head -> Body gaze tracking toward (offset_x, offset_y):
         Moves Luna's eyes and 3D VR head/neck first, and only gently rotates her
-        whole body when someone moves further off-center (> 0.26), preventing
-        robotic whole-body twitch-turning on small shifts.
+        body when someone is clearly off-center (> 0.34), preventing erratic twitching.
         """
-        eye_pitch = float(max(-16.0, min(18.0, -offset_y * 14.0)))
-        eye_yaw = float(max(-20.0, min(20.0, offset * 18.0)))
+        eye_pitch = float(max(-14.0, min(16.0, -offset_y * 12.0)))
+        eye_yaw = float(max(-18.0, min(18.0, offset * 15.0)))
         self.vr_tracker.set_gaze_target(offset, offset_y)
-        self.set_eyes(pitch=eye_pitch, yaw=eye_yaw, closed=0.14)
-        if abs(offset) > 0.24:
-            speed = 0.48 if offset > 0 else -0.48
-            dur = min(0.45, max(0.12, (abs(offset) - 0.10) * 0.38))
+        self.set_eyes(pitch=eye_pitch, yaw=eye_yaw, closed=0.12)
+        if abs(offset) > 0.34:
+            speed = 0.42 if offset > 0 else -0.42
+            dur = min(0.45, max(0.16, (abs(offset) - 0.18) * 0.42))
             await self.turn(speed=speed, duration=dur)
-            # Keep natural residual neck + eye lead toward target instead of snapping to 0
-            self.vr_tracker.set_gaze_target(offset * 0.35, offset_y)
-            self.set_eyes(pitch=eye_pitch, yaw=float(offset * 6.0), closed=0.14)
+            # Keep smooth residual neck + eye lead toward target
+            self.vr_tracker.set_gaze_target(offset * 0.30, offset_y)
+            self.set_eyes(pitch=eye_pitch, yaw=float(offset * 5.0), closed=0.12)
 
     async def emote(self, emote_id: int, duration: float = 2.8, happy: bool = True, blush: float = 0.45, emotion_idx: int = 1):
         """
@@ -415,32 +417,28 @@ class VRChatOSC:
                 await self.emote(3, duration=2.2, happy=True, blush=0.45, emotion_idx=2)
 
         elif action == "stare_smug":
-            # Stationary cutesy-smug stare using Colibri Blind's Sleepy + BlushLock + EmotionIDX + Blink
+            # Calm, consistent smug expression (no random emotion flickering!)
             self.apply_cutesy_smug_face(
-                blush=0.60,
+                blush=0.42,
                 happy=True,
                 sleepy_smug=True,
-                emotion_idx=random.choice([1, 2]),
-                exp_mod_l=True,
-                exp_mod_r=random.choice([True, False]),
-            )
-            await self.trigger_colibri_blink()
-            await asyncio.sleep(0.5)
-
-        elif action == "cutesy_idle":
-            # Natural cutesy-smug idle animation driving Colibri Blind's actual Blink & EmotionIDX parameters
-            self.apply_cutesy_smug_face(
-                blush=0.45,
-                happy=True,
-                sleepy_smug=random.choice([True, True, False]),
-                emotion_idx=random.choice([1, 2, 3]),
+                emotion_idx=1,
                 exp_mod_l=True,
                 exp_mod_r=False,
             )
-            glance = random.choice([-10.0, 10.0, 0.0])
-            self.set_eyes(pitch=-2.0, yaw=glance, closed=0.22)
-            await asyncio.sleep(0.28)
-            await self.trigger_colibri_blink()
+            await asyncio.sleep(0.4)
+
+        elif action == "cutesy_idle":
+            # Steady relaxed baseline expression (blinking is handled gently by gaze_track_loop)
+            self.apply_cutesy_smug_face(
+                blush=0.35,
+                happy=True,
+                sleepy_smug=False,
+                emotion_idx=1,
+                exp_mod_l=True,
+                exp_mod_r=False,
+            )
+            await asyncio.sleep(0.3)
 
         elif action == "jump":
             await self.jump()

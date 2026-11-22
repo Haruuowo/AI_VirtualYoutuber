@@ -769,42 +769,64 @@ class LunaInVRChat:
 
     async def _stare_at_speaker(self, allow_approach: bool = False) -> bool:
         """
-        Closed-loop local YOLOv8-nano + VRChat nametag 2D tracker (<20ms, 0 API tokens):
-        smoothly aims Luna's eyes, 3D VR neck (yaw + pitch), and body toward whoever
-        she sees. When `allow_approach=True`, she curves and walks smoothly toward them
-        using simultaneous forward + turn steering (`steer_walk`) instead of walking
-        in a blind straight line, and stops at comfortable chat distance.
+        Smooth, hysteresis-stabilized 2D gaze & person follower (<20ms, 0 API tokens):
+        - Low-pass filters raw YOLO/nametag coordinates so box jitter never yanks her head/body.
+        - Enforces turn cooldowns and distance hysteresis so she never oscillates or lurches.
+        - Curves smoothly toward a person (`steer_walk`) only when they are consistently far away.
         """
         frame = await asyncio.to_thread(capture_luna_vrchat_frame, 640, 360, False)
         if frame is None:
             return False
 
-        found, offset_x, offset_y, height_ratio = await asyncio.to_thread(track_target_person_2d, frame)
+        found, raw_ox, raw_oy, raw_hr = await asyncio.to_thread(track_target_person_2d, frame)
         if not found:
+            self._far_streak = 0
             return False
 
-        self._last_person_seen_ts = time.time()
-        self._last_seen_offset_x = offset_x
+        now = time.time()
+        # Exponential moving average to eliminate single-frame YOLO/nametag bounding-box jitter
+        if getattr(self, "_ema_ox", None) is None or (now - getattr(self, "_last_person_seen_ts", 0.0) > 2.5):
+            self._ema_ox, self._ema_oy, self._ema_hr = raw_ox, raw_oy, raw_hr
+        else:
+            self._ema_ox = self._ema_ox * 0.55 + raw_ox * 0.45
+            self._ema_oy = self._ema_oy * 0.55 + raw_oy * 0.45
+            self._ema_hr = self._ema_hr * 0.60 + raw_hr * 0.40
 
-        eye_pitch = float(max(-16.0, min(18.0, -offset_y * 14.0)))
-        eye_yaw = float(max(-20.0, min(20.0, offset_x * 18.0)))
-        self.osc.vr_tracker.set_gaze_target(offset_x, offset_y)
-        self.osc.set_eyes(pitch=eye_pitch, yaw=eye_yaw, closed=0.14)
+        ox, oy, hr = self._ema_ox, self._ema_oy, self._ema_hr
+        self._last_person_seen_ts = now
+        self._last_seen_offset_x = ox
+
+        # Small deadzone on gaze so she holds steady eye contact when you stand still
+        gaze_ox = 0.0 if abs(ox) < 0.06 else ox
+        gaze_oy = 0.0 if abs(oy) < 0.06 else oy
+        eye_pitch = float(max(-14.0, min(16.0, -gaze_oy * 12.0)))
+        eye_yaw = float(max(-18.0, min(18.0, gaze_ox * 15.0)))
+        self.osc.vr_tracker.set_gaze_target(gaze_ox, gaze_oy)
+        self.osc.set_eyes(pitch=eye_pitch, yaw=eye_yaw, closed=0.12)
 
         if allow_approach:
-            if height_ratio < 0.50:
-                # Smoothly curve toward the person while walking (simultaneous forward + turn!)
-                turn_cmd = float(max(-0.72, min(0.72, offset_x * 0.95))) if abs(offset_x) > 0.12 else 0.0
-                # Slow down forward speed when turning sharply so she curves cleanly instead of overshooting
-                fwd_cmd = 0.72 if abs(offset_x) < 0.45 else 0.35
-                await self.osc.steer_walk(vertical=fwd_cmd, turn=turn_cmd, duration=0.45)
+            # Distance hysteresis: require 2 consecutive far frames (<0.42) to start walking, stop at >=0.52
+            if hr < 0.42:
+                self._far_streak = getattr(self, "_far_streak", 0) + 1
+            elif hr >= 0.52:
+                self._far_streak = 0
+
+            if getattr(self, "_far_streak", 0) >= 2:
+                turn_cmd = float(max(-0.55, min(0.55, ox * 0.75))) if abs(ox) > 0.18 else 0.0
+                fwd_cmd = 0.65 if abs(ox) < 0.45 else 0.35
+                await self.osc.steer_walk(vertical=fwd_cmd, turn=turn_cmd, duration=0.55)
+                self._last_turn_ts = time.time()
                 return True
-            if height_ratio > 0.84:
-                # Too close / inside personal space — gently step back while keeping eye contact
-                await self.osc.steer_walk(vertical=-0.42, turn=0.0, duration=0.35)
+            if hr > 0.88 and (now - getattr(self, "_last_turn_ts", 0.0) > 1.2):
+                await self.osc.steer_walk(vertical=-0.38, turn=0.0, duration=0.35)
+                self._last_turn_ts = time.time()
                 return True
 
-        await self.osc.lock_gaze_on_offset(offset_x, offset_y)
+        # Only rotate whole body when clearly off-center (>0.34) and after a 1.4s cooldown
+        if abs(ox) > 0.34 and (now - getattr(self, "_last_turn_ts", 0.0) > 1.4):
+            await self.osc.lock_gaze_on_offset(ox, oy)
+            self._last_turn_ts = time.time()
+
         return True
 
     async def respond(self, user: str, text: str):
@@ -861,13 +883,17 @@ class LunaInVRChat:
         """
         self._last_person_seen_ts = 0.0
         self._last_seen_offset_x = 0.0
-        next_blink_ts = time.time() + random.uniform(3.2, 5.8)
+        self._last_turn_ts = 0.0
+        self._last_search_ts = 0.0
+        self._far_streak = 0
+        self._ema_ox = None
+        next_blink_ts = time.time() + random.uniform(3.8, 6.8)
         while True:
-            await asyncio.sleep(0.40)
+            await asyncio.sleep(0.55)
             now = time.time()
-            # Natural periodic blinking so her eyes look alive while staring
+            # Natural periodic blinking so her eyes look alive without snapping gaze
             if now >= next_blink_ts and not self.speaking:
-                next_blink_ts = now + random.uniform(3.2, 6.2)
+                next_blink_ts = now + random.uniform(3.8, 6.8)
                 try:
                     await self.osc.trigger_colibri_blink()
                 except Exception:
@@ -881,14 +907,20 @@ class LunaInVRChat:
                 saw = await self._stare_at_speaker(allow_approach=should_follow)
                 if not saw:
                     lost_for = now - self._last_person_seen_ts
-                    if should_follow and self._last_person_seen_ts > 0.0 and 0.6 < lost_for < 8.5:
-                        # Person walked out of frame — turn toward the last side we saw them on!
+                    if (
+                        should_follow
+                        and self._last_person_seen_ts > 0.0
+                        and 2.5 < lost_for < 7.5
+                        and (now - self._last_search_ts > 1.8)
+                    ):
+                        # Wait 2.5s before turning so 1-2 dropped YOLO frames never cause erratic spinning!
                         search_dir = 1.0 if self._last_seen_offset_x >= 0.0 else -1.0
-                        await self.osc.turn(speed=0.55 * search_dir, duration=0.35)
-                    elif lost_for > 3.5:
+                        await self.osc.turn(speed=0.42 * search_dir, duration=0.40)
+                        self._last_search_ts = time.time()
+                    elif lost_for > 4.0:
                         # Gently relax neck & eyes back toward neutral forward
                         self.osc.vr_tracker.set_gaze_target(0.0, 0.0)
-                        self.osc.set_eyes(pitch=-1.5, yaw=0.0, closed=0.15)
+                        self.osc.set_eyes(pitch=-1.5, yaw=0.0, closed=0.12)
             except Exception:
                 pass
 
