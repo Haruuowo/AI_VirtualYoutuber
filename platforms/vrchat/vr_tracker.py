@@ -329,6 +329,62 @@ class VirtualVRPoseController:
             r_x, r_y, r_z, *rq,
         ]
 
+    def _compute_fbt_poses(self, t: float) -> list[float]:
+        """Computes 6-DOF Waist + Left Foot + Right Foot tracker poses (21 floats)."""
+        act = self.current_action if t < self.action_until else "idle"
+        dt = t - self.action_started
+        breath = math.sin(t * 1.9) * 0.006
+        sway = math.sin(t * 0.85) * 0.018
+
+        # Default standing hip + feet
+        w_x, w_y, w_z = sway, 0.96 + breath, 0.0
+        w_pitch, w_yaw, w_roll = 0.0, self.gaze_yaw_deg * 0.25, sway * 160.0
+
+        lf_x, lf_y, lf_z = -0.10, 0.06, 0.0
+        rf_x, rf_y, rf_z =  0.10, 0.06, 0.0
+        lf_pitch, lf_yaw, lf_roll = 0.0, -4.0, 0.0
+        rf_pitch, rf_yaw, rf_roll = 0.0,  4.0, 0.0
+
+        if act == "stare_smug":
+            # Sassy hip cock to one side
+            w_x, w_roll = 0.035, -6.0
+        elif act == "dance":
+            beat = dt * 6.5
+            w_x = math.sin(beat * 0.5) * 0.055
+            w_y = 0.96 + abs(math.sin(beat)) * 0.035
+            w_roll = math.sin(beat * 0.5) * 9.0
+            lf_y = 0.06 + max(0.0, math.sin(beat)) * 0.09
+            rf_y = 0.06 + max(0.0, -math.sin(beat)) * 0.09
+            lf_z = -max(0.0, math.sin(beat)) * 0.06
+            rf_z = -max(0.0, -math.sin(beat)) * 0.06
+        elif self.speaking and act in ("idle", "cutesy_idle", "stare_smug"):
+            energy = self._current_speech_energy(t)
+            w_x += math.sin(t * 3.1) * 0.015 * (0.4 + energy)
+            w_roll += math.sin(t * 3.1) * 3.5 * (0.4 + energy)
+
+        # Walking foot-stepping cycle when moving via joystick
+        walk_mag = max(abs(self._loco_forward), abs(self._loco_strafe))
+        if walk_mag > 0.05:
+            stride = t * 8.5
+            lf_y = 0.06 + max(0.0, math.sin(stride)) * 0.07 * walk_mag
+            rf_y = 0.06 + max(0.0, -math.sin(stride)) * 0.07 * walk_mag
+            lf_z = -math.cos(stride) * 0.14 * self._loco_forward
+            rf_z =  math.cos(stride) * 0.14 * self._loco_forward
+
+        if self._loco_jump > 0.5:
+            w_y += 0.14
+            lf_y += 0.18
+            rf_y += 0.18
+
+        wq = euler_deg_to_quat(w_pitch, w_yaw, w_roll)
+        lfq = euler_deg_to_quat(lf_pitch, lf_yaw, lf_roll)
+        rfq = euler_deg_to_quat(rf_pitch, rf_yaw, rf_roll)
+        return [
+            w_x, w_y, w_z, *wq,
+            lf_x, lf_y, lf_z, *lfq,
+            rf_x, rf_y, rf_z, *rfq,
+        ]
+
     def _loop(self):
         while self._running:
             t = time.monotonic()
@@ -339,8 +395,9 @@ class VirtualVRPoseController:
                 self._loco_turn,
                 self._loco_jump,
             ])
+            floats.extend(self._compute_fbt_poses(t))
             try:
-                pkt = struct.pack("<25f", *floats)
+                pkt = struct.pack("<46f", *floats)
                 self.sock.sendto(pkt, self.addr)
             except Exception:
                 pass

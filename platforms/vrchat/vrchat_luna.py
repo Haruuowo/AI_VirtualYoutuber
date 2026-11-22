@@ -325,6 +325,7 @@ def parse_args():
     p.add_argument("--think-every", type=int, default=38, help="Average seconds between autonomous thoughts (default: 38)")
     p.add_argument("--no-launch", action="store_true", help="Do not auto-launch missing VRChat windows on startup")
     p.add_argument("--vr", action="store_true", help="Launch Luna in SteamVR 6-DOF Virtual Headset + Hands mode (driver_luna)")
+    p.add_argument("--world-ears", type=str, default=None, help="Audio input device substring for hearing other VRChat players (e.g. 'CABLE-B Output')")
     p.add_argument("--always-listen", action="store_true", help="Start in Always-Listen (Open Mic) mode instead of VRChat Talk-Only (Hold V) mode")
     p.add_argument("--list-devices", action="store_true", help="Print audio device names and exit")
     return p.parse_args()
@@ -561,9 +562,9 @@ class LunaInVRChat:
             daemon=True,
         ).start()
 
-        # Only open a 2nd listener if VRCHAT_WORLD_LISTEN_DEVICE is explicitly set in .env
+        # Only open a 2nd listener if VRCHAT_WORLD_LISTEN_DEVICE or --world-ears is explicitly set
         # (Opening a disabled Stereo Mix endpoint causes PyAudio to call Pa_Terminate() and crash PortAudio)
-        world_dev = os.getenv("VRCHAT_WORLD_LISTEN_DEVICE", "").strip()
+        world_dev = (getattr(self.args, "world_ears", None) or os.getenv("VRCHAT_WORLD_LISTEN_DEVICE", "")).strip()
         if world_dev:
             threading.Thread(
                 target=self._start_stt_listener,
@@ -868,11 +869,13 @@ class LunaInVRChat:
         print(f"  Eyes      : {eyes_desc}")
         print(f"  VRChat    : world='{snap['world']}' | players={snap['players'] or ['(solo)']}")
         print(f"  OSC       : {self.osc.host}:{self.osc.port}  (chatbox + /input/* locomotion)")
-        print(f"  6-DOF VR  : Streaming 60Hz Head + Left/Right Hands -> UDP 127.0.0.1:27015 (driver_luna)")
+        print(f"  6-DOF VR  : Streaming 60Hz Head + Hands + FBT (Waist/Feet) -> UDP 127.0.0.1:27015 (driver_luna)")
         print(f"  Autonomy  : {'ON (' + snap['mode'].upper() + ' mode)' if self.autonomy_enabled else 'OFF (manual)'}")
         print(f"  Voice Out : {'OFF (chatbox only)' if not self.voice else ' + '.join(x for x in (self.voice.audio_device, self.voice.mirror_device) if x)}")
         ear_mode_lbl = "VRC TALK ONLY (Hold V in VRChat | Press F8 to toggle)" if self.vrc_talk_only else "ALWAYS LISTEN (Open Mic | Press F8 to toggle)"
         print(f"  Ears      : {'ON [' + ear_mode_lbl + ']' if self.args.listen else 'OFF (use --listen)'}")
+        world_dev = (getattr(self.args, "world_ears", None) or os.getenv("VRCHAT_WORLD_LISTEN_DEVICE", "")).strip()
+        print(f"  World Ears: {'ON (' + world_dev + ')' if (self.args.listen and world_dev) else 'OFF (set VRCHAT_WORLD_LISTEN_DEVICE or --world-ears)'}")
         print("=" * 64)
         print("Tip: Hold 'V' in VRChat to talk to Luna, or press 'F8' (or type 'toggle') to switch to Always-Listen!")
         print("Type below (or speak into your mic) to talk to Luna. Type 'quit' to exit.\n")

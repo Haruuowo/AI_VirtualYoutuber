@@ -85,6 +85,8 @@ class VoiceHandler:
         self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AnaNeural').strip()
         self.voice_pitch = os.getenv('VOICE_PITCH', '+6Hz').strip()
         self.voice_rate = os.getenv('VOICE_RATE', '+10%').strip()
+        self.rvc_pitch_shift = float(os.getenv('RVC_PITCH_SHIFT', '0.0') or '0.0')
+        self.rvc_protect = float(os.getenv('RVC_PROTECT', '0.33') or '0.33')
         self.ref_audio_path = os.getenv('REF_AUDIO_PATH', '').strip()
         self.device_id = None
         self.mirror_device_id = None
@@ -225,6 +227,7 @@ class VoiceHandler:
 
         conv = await asyncio.to_thread(get_rvc_converter, self.tts_engine)
         pitch, rate = self._get_neuro_edge_prosody(full_text, emotion=emotion)
+        f0_up_key, protect = self._get_rvc_emotion_params(full_text, emotion=emotion)
         stamp = int(time.time() * 1000)
         mp3_p = os.path.join(BASE_DIR, f"temp_rvc_{os.getpid()}_{stamp}.mp3")
         wav_p = os.path.join(BASE_DIR, f"temp_rvc_{os.getpid()}_{stamp}.wav")
@@ -234,7 +237,7 @@ class VoiceHandler:
             await asyncio.to_thread(mp3_to_wav, mp3_p, wav_p)
             data, sr = sf.read(wav_p)
             return await asyncio.to_thread(
-                conv.convert_to_48k_stereo, data, sr, 0.0, 0.33
+                conv.convert_to_48k_stereo, data, sr, f0_up_key, protect
             )
         finally:
             for p in (mp3_p, wav_p):
@@ -333,6 +336,19 @@ class VoiceHandler:
             for p in [TEMP_MP3, TEMP_WAV]:
                 if os.path.exists(p):
                     os.remove(p)
+
+    def _get_rvc_emotion_params(self, text: str, emotion: str | None = None) -> tuple[float, float]:
+        """Per-emotion pitch-shift (semitones) & consonant protection around RVC_PITCH_SHIFT / RVC_PROTECT."""
+        em = (emotion or "").lower()
+        base_pitch = self.rvc_pitch_shift
+        base_protect = max(0.05, min(0.50, self.rvc_protect))
+        if em in ("hug", "blush", "headpat", "boop"):
+            return (base_pitch - 0.5, min(0.45, base_protect + 0.05))
+        if "!" in text or em in ("cheer", "clap", "dance", "happy_hop", "wave"):
+            return (base_pitch + 0.7, base_protect)
+        if em in ("stare_smug", "sassy_react", "point", "stick"):
+            return (base_pitch + 0.2, base_protect)
+        return (base_pitch, base_protect)
 
     def _get_neuro_edge_prosody(self, clause: str, emotion: str | None = None) -> tuple[str, str]:
         """
