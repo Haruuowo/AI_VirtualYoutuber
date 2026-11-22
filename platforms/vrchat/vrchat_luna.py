@@ -143,7 +143,9 @@ def _configure_vrchat_registry_for_luna():
         winreg.SetValueEx(k, "UI.Settings.Osc_h1043380067", 0, winreg.REG_DWORD, 1)
         winreg.SetValueEx(k, "VRC_INPUT_OSC_h1104161515", 0, winreg.REG_DWORD, 1)
         cable_bytes = b"CABLE Output (VB-Audio Virtual Cable)\x00"
+        real_mic_bytes = b"Microphone Array (Realtek(R) Audio)\x00"
         winreg.SetValueEx(k, "VRC_INPUT_MIC_DEVICE_NAME_VR_h2729556311", 0, winreg.REG_BINARY, cable_bytes)
+        winreg.SetValueEx(k, "VRC_INPUT_MIC_DEVICE_NAME_Desktop_h2596021377", 0, winreg.REG_BINARY, real_mic_bytes)
         winreg.CloseKey(k)
     except Exception as e:
         print(f"[registry] Note: could not update VRChat prefs: {e}")
@@ -243,6 +245,7 @@ def parse_args():
     p.add_argument("--think-every", type=int, default=38, help="Average seconds between autonomous thoughts (default: 38)")
     p.add_argument("--no-launch", action="store_true", help="Do not auto-launch missing VRChat windows on startup")
     p.add_argument("--vr", action="store_true", help="Launch Luna in SteamVR 6-DOF Virtual Headset + Hands mode (driver_luna)")
+    p.add_argument("--always-listen", action="store_true", help="Start in Always-Listen (Open Mic) mode instead of VRChat Talk-Only (Hold V) mode")
     p.add_argument("--list-devices", action="store_true", help="Print audio device names and exit")
     return p.parse_args()
 
@@ -280,6 +283,11 @@ class LunaInVRChat:
         self.last_auto_travel = 0.0
         self.use_vr = getattr(args, "vr", False) or os.getenv("VRCHAT_VR_MODE", "false").lower() in ("true", "1", "yes")
         self.autonomy_enabled = not getattr(args, "no_autonomy", False)
+        # VRChat Talk-Gate Toggle: when True, Luna ONLY hears you when you talk in VRChat (Hold V or unmute in VRChat).
+        # Press F8 anytime (or type 'toggle' in console) to switch between VRC-Talk-Only and Always-Listen!
+        self.vrc_talk_only = not getattr(args, "always_listen", False)
+        self.last_vrc_talk_ts = 0.0
+        self.vrc_is_unmuted = False
         self.voice = None
         if not getattr(args, "no_voice", False):
             from luna.voice import VoiceHandler
@@ -292,6 +300,73 @@ class LunaInVRChat:
             self.voice.set_audio_device()
 
     # ── Inputs (Console + Your Mic + VRChat World Players Audio) ───────────
+
+    def toggle_ear_mode(self):
+        """Toggles between VRChat Talk-Only (Hold V / Unmuted in VRC) and Always-Listen (Open Mic)."""
+        self.vrc_talk_only = not self.vrc_talk_only
+        mode_str = "VRCHAT TALK ONLY (Hold V in VRChat to talk to Luna)" if self.vrc_talk_only else "ALWAYS LISTEN (Open Mic - hears you anytime)"
+        print(f"\n[ears-toggle] Switched Ear Mode -> {mode_str}")
+
+    def _start_vrc_talk_and_hotkey_monitor(self):
+        """
+        Monitors:
+          1. 'V' key (VRChat Push-To-Talk) via Win32 GetAsyncKeyState so Luna knows when
+             you are actively talking inside VRChat.
+          2. 'F8' global hotkey so you can toggle between VRChat Talk-Only mode and
+             Always-Listen mode anytime without leaving VRChat!
+          3. Your main VRChat's OSC output port (127.0.0.1:9001) for /avatar/parameters/MuteSelf
+             and /avatar/parameters/Voice in case you use Toggle-Mute in VRChat.
+        """
+        def _osc_mute_watcher():
+            try:
+                from pythonosc.dispatcher import Dispatcher
+                from pythonosc.osc_server import BlockingOSCUDPServer
+
+                disp = Dispatcher()
+
+                def _on_mute(_addr, val):
+                    self.vrc_is_unmuted = not bool(val)
+                    if self.vrc_is_unmuted:
+                        self.last_vrc_talk_ts = time.time()
+
+                def _on_voice(_addr, val):
+                    try:
+                        if float(val) > 0.02:
+                            self.last_vrc_talk_ts = time.time()
+                    except Exception:
+                        pass
+
+                disp.map("/avatar/parameters/MuteSelf", _on_mute)
+                disp.map("/avatar/parameters/Voice", _on_voice)
+                srv = BlockingOSCUDPServer(("127.0.0.1", 9001), disp)
+                srv.serve_forever()
+            except Exception:
+                pass
+
+        threading.Thread(target=_osc_mute_watcher, daemon=True).start()
+
+        if sys.platform != "win32":
+            return
+
+        def _key_watcher():
+            import ctypes
+            user32 = ctypes.windll.user32
+            VK_V = 0x56
+            VK_F8 = 0x77
+            f8_was_down = False
+            while True:
+                # Track V (VRChat Push-To-Talk key)
+                if user32.GetAsyncKeyState(VK_V) & 0x8000:
+                    self.last_vrc_talk_ts = time.time()
+
+                # Track F8 toggle hotkey (edge-triggered)
+                f8_down = bool(user32.GetAsyncKeyState(VK_F8) & 0x8000)
+                if f8_down and not f8_was_down:
+                    self.toggle_ear_mode()
+                f8_was_down = f8_down
+                time.sleep(0.025)
+
+        threading.Thread(target=_key_watcher, daemon=True).start()
 
     def push(self, user: str, text: str, heard: bool):
         assert self.loop is not None
@@ -310,6 +385,9 @@ class LunaInVRChat:
             if text.lower() in ("join", "join me", "follow me"):
                 target = get_target_instance_for_luna()
                 await asyncio.to_thread(travel_luna_to_instance, target, self.use_vr)
+                continue
+            if text.lower() in ("toggle", "ptt", "mute", "ears"):
+                self.toggle_ear_mode()
                 continue
             if text:
                 await self.queue.put((HOST_NAME, text, False))
@@ -366,6 +444,10 @@ class LunaInVRChat:
                         audio = rec.listen(source, phrase_time_limit=7)
                         if self.speaking:
                             continue
+                        # If VRChat Talk-Only mode is active, ignore mic speech unless you held V or unmuted in VRChat!
+                        if tag == "mic" and self.vrc_talk_only:
+                            if not self.vrc_is_unmuted and (time.time() - self.last_vrc_talk_ts > 2.5):
+                                continue
                         text = self._transcribe_audio(rec, audio)
                         if text:
                             who = speaker_label
@@ -386,6 +468,7 @@ class LunaInVRChat:
 
     def start_all_ears(self):
         """Starts listening to your microphone (and optional VRCHAT_WORLD_LISTEN_DEVICE if explicitly configured)."""
+        self._start_vrc_talk_and_hotkey_monitor()
         mic_dev = os.getenv("VRCHAT_LISTEN_DEVICE", "").strip()
         threading.Thread(
             target=self._start_stt_listener,
@@ -640,9 +723,10 @@ class LunaInVRChat:
         print(f"  6-DOF VR  : Streaming 60Hz Head + Left/Right Hands -> UDP 127.0.0.1:27015 (driver_luna)")
         print(f"  Autonomy  : {'ON (' + snap['mode'].upper() + ' mode)' if self.autonomy_enabled else 'OFF (manual)'}")
         print(f"  Voice Out : {'OFF (chatbox only)' if not self.voice else ' + '.join(x for x in (self.voice.audio_device, self.voice.mirror_device) if x)}")
-        print(f"  Ears      : {'ON (Mic + World Audio)' if self.args.listen else 'OFF (use --listen)'}")
+        ear_mode_lbl = "VRC TALK ONLY (Hold V in VRChat | Press F8 to toggle)" if self.vrc_talk_only else "ALWAYS LISTEN (Open Mic | Press F8 to toggle)"
+        print(f"  Ears      : {'ON [' + ear_mode_lbl + ']' if self.args.listen else 'OFF (use --listen)'}")
         print("=" * 64)
-        print("Tip: Ask her 'what do you see?', 'look at my avatar', 'stay here', or 'roam around'.")
+        print("Tip: Hold 'V' in VRChat to talk to Luna, or press 'F8' (or type 'toggle') to switch to Always-Listen!")
         print("Type below (or speak into your mic) to talk to Luna. Type 'quit' to exit.\n")
 
         if self.args.listen:
