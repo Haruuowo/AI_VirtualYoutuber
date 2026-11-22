@@ -43,12 +43,13 @@ def _ease_scale(progress: float, duration: float) -> float:
 
 
 class VRChatOSC:
-    def __init__(self, host: str | None = None, port: int | None = None):
+    def __init__(self, host: str | None = None, port: int | None = None, use_vr: bool = True):
         self.host = host or os.getenv("VRCHAT_OSC_HOST", "127.0.0.1")
         self.port = int(port or os.getenv("VRCHAT_OSC_PORT", "9000"))
+        self.use_vr = bool(use_vr)
         self.client = SimpleUDPClient(self.host, self.port)
         self._move_lock = asyncio.Lock()
-        # 60 Hz 6-DOF Virtual VR Head + Left/Right Hands streamer (UDP 127.0.0.1:27015 -> driver_luna.dll)
+        # 60 Hz 6-DOF Virtual VR Head + Left/Right Hands + Joystick streamer (UDP 127.0.0.1:27015 -> driver_luna.dll)
         self.vr_tracker = VirtualVRPoseController()
         self.vr_tracker.start()
 
@@ -86,6 +87,7 @@ class VRChatOSC:
 
     def stop_all(self):
         """Immediately zeroes all movement axes and buttons so the avatar never gets stuck walking."""
+        self.vr_tracker.reset_locomotion()
         self.set_param("VRCEmote", 0)
         self.set_param("DoingEmote", False)
         for addr in ("/input/Vertical", "/input/Horizontal", "/input/LookHorizontal"):
@@ -105,34 +107,52 @@ class VRChatOSC:
         run: bool = False,
         buttons: list[str] | None = None,
     ):
-        """Streams ~40 Hz cosine-eased analog values (plus optional Desktop movement buttons) over OSC."""
+        """Streams ~40 Hz cosine-eased locomotion via native SteamVR Oculus Touch sticks (VR) or OSC (Desktop)."""
         dur = max(0.05, float(duration))
         btns = buttons or []
         async with self._move_lock:
             try:
-                if run:
-                    self.client.send_message("/input/Run", 1)
-                for btn in btns:
-                    self.client.send_message(btn, 1)
+                if not self.use_vr:
+                    if run:
+                        self.client.send_message("/input/Run", 1)
+                    for btn in btns:
+                        self.client.send_message(btn, 1)
                 t0 = time.monotonic()
                 while True:
                     elapsed = time.monotonic() - t0
                     if elapsed >= dur:
                         break
                     scale = _ease_scale(elapsed / dur, dur)
-                    for addr, target in axes:
-                        self.client.send_message(addr, float(target * scale))
+                    if self.use_vr:
+                        strafe = 0.0
+                        forward = 0.0
+                        turn = 0.0
+                        for addr, target in axes:
+                            val = float(target * scale)
+                            if addr == "/input/Horizontal":
+                                strafe = val
+                            elif addr == "/input/Vertical":
+                                forward = val
+                            elif addr == "/input/LookHorizontal":
+                                turn = val
+                        self.vr_tracker.set_locomotion(strafe=strafe, forward=forward, turn=turn)
+                    else:
+                        for addr, target in axes:
+                            self.client.send_message(addr, float(target * scale))
                     await asyncio.sleep(min(0.025, dur - elapsed))
             finally:
-                for addr, _ in axes:
-                    self.client.send_message(addr, 0.0)
-                for btn in btns:
-                    self.client.send_message(btn, 0)
-                if run:
-                    self.client.send_message("/input/Run", 0)
+                if self.use_vr:
+                    self.vr_tracker.reset_locomotion()
+                else:
+                    for addr, _ in axes:
+                        self.client.send_message(addr, 0.0)
+                    for btn in btns:
+                        self.client.send_message(btn, 0)
+                    if run:
+                        self.client.send_message("/input/Run", 0)
 
     async def move(self, vertical: float = 0.0, horizontal: float = 0.0, duration: float = 1.0, run: bool = False):
-        """Walks/strafes cleanly using both smooth analog axes and Desktop MoveForward/MoveBackward buttons."""
+        """Walks/strafes cleanly using native VR thumbsticks in SteamVR mode or OSC axes in Desktop mode."""
         # Clear any active full-body emote before moving so her legs are never locked in place
         self.set_param("VRCEmote", 0)
         self.set_param("DoingEmote", False)
@@ -156,10 +176,15 @@ class VRChatOSC:
         await self._ramp_axes([("/input/LookHorizontal", s)], duration)
 
     async def jump(self):
-        """Taps the jump input."""
-        self.client.send_message("/input/Jump", 1)
-        await asyncio.sleep(0.15)
-        self.client.send_message("/input/Jump", 0)
+        """Taps the jump input (native Oculus Touch 'A' button in VR mode or OSC /input/Jump)."""
+        if self.use_vr:
+            self.vr_tracker.set_locomotion(jump=True)
+            await asyncio.sleep(0.15)
+            self.vr_tracker.set_locomotion(jump=False)
+        else:
+            self.client.send_message("/input/Jump", 1)
+            await asyncio.sleep(0.15)
+            self.client.send_message("/input/Jump", 0)
 
     # ── Avatar parameters, Hand Emotes & Cutesy-Smug Facial Expressions ────
 
@@ -257,19 +282,39 @@ class VRChatOSC:
             return
 
         if action == "wave":
-            await self.emote(1, duration=2.6, happy=True)
+            if self.use_vr:
+                self.apply_cutesy_smug_face(blush=0.45, happy=True, emotion_idx=1)
+                await asyncio.sleep(2.4)
+            else:
+                await self.emote(1, duration=2.6, happy=True)
 
         elif action == "clap":
-            await self.emote(2, duration=2.6, happy=True)
+            if self.use_vr:
+                self.apply_cutesy_smug_face(blush=0.45, happy=True, emotion_idx=1)
+                await asyncio.sleep(2.4)
+            else:
+                await self.emote(2, duration=2.6, happy=True)
 
         elif action == "point":
-            await self.emote(3, duration=2.4)
+            if self.use_vr:
+                self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=True, emotion_idx=1)
+                await asyncio.sleep(2.2)
+            else:
+                await self.emote(3, duration=2.4)
 
         elif action == "cheer":
-            await self.emote(4, duration=2.8, happy=True)
+            if self.use_vr:
+                self.apply_cutesy_smug_face(blush=0.50, happy=True, sleepy_smug=False, emotion_idx=2)
+                await asyncio.sleep(2.6)
+            else:
+                await self.emote(4, duration=2.8, happy=True)
 
         elif action == "dance":
-            await self.emote(5, duration=5.5, happy=True)
+            if self.use_vr:
+                self.apply_cutesy_smug_face(blush=0.55, happy=True, sleepy_smug=False, emotion_idx=2)
+                await asyncio.sleep(5.2)
+            else:
+                await self.emote(5, duration=5.5, happy=True)
 
         elif action == "backflip":
             await self.emote(6, duration=2.8, happy=True)
@@ -283,7 +328,10 @@ class VRChatOSC:
         elif action == "blush":
             self.apply_cutesy_smug_face(blush=1.0, happy=True, sleepy_smug=True, emotion_idx=3, exp_mod_l=True, exp_mod_r=True)
             self.set_param("Headpat", True)
-            await self.emote(7, duration=2.4, happy=True, blush=1.0, emotion_idx=3)
+            if self.use_vr:
+                await asyncio.sleep(2.4)
+            else:
+                await self.emote(7, duration=2.4, happy=True, blush=1.0, emotion_idx=3)
             self.set_param("Headpat", False)
 
         elif action == "headpat":
@@ -293,11 +341,14 @@ class VRChatOSC:
             self.set_param("Headpat", False)
 
         elif action == "hug":
-            # Walks in close to you, blushes warmly, and raises her arms/face for a hug
+            # Walks in close to you, blushes warmly, and raises her 6-DOF VR arms for a hug
             self.apply_cutesy_smug_face(blush=0.95, happy=True, sleepy_smug=True, emotion_idx=2, exp_mod_l=True, exp_mod_r=True)
             await self.move(vertical=0.75, duration=0.90)
             self.set_param("Headpat", True)
-            await self.emote(4, duration=2.4, happy=True, blush=0.95, emotion_idx=2)
+            if self.use_vr:
+                await asyncio.sleep(2.6)
+            else:
+                await self.emote(4, duration=2.4, happy=True, blush=0.95, emotion_idx=2)
             self.set_param("Headpat", False)
             self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=True, emotion_idx=1)
 
@@ -321,7 +372,11 @@ class VRChatOSC:
             # Toggles Colibri Blind's hand stick prop ('Sticc') and points/waves it!
             self._stick_on = not getattr(self, "_stick_on", False)
             self.set_param("Sticc", self._stick_on)
-            await self.emote(3, duration=2.2, happy=True, blush=0.45, emotion_idx=2)
+            if self.use_vr:
+                self.apply_cutesy_smug_face(blush=0.45, happy=True, emotion_idx=2)
+                await asyncio.sleep(2.2)
+            else:
+                await self.emote(3, duration=2.2, happy=True, blush=0.45, emotion_idx=2)
 
         elif action == "stare_smug":
             # Stationary cutesy-smug stare using Colibri Blind's Sleepy + BlushLock + EmotionIDX + Blink

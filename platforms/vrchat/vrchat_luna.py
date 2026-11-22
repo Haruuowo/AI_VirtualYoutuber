@@ -21,8 +21,10 @@ Capabilities:
 """
 import argparse
 import asyncio
+import ctypes
 import os
 import random
+import struct
 import subprocess
 import sys
 import threading
@@ -106,6 +108,11 @@ def _ensure_steamvr_running():
     """Starts SteamVR (vrstartup.exe) with driver_luna Virtual HMD + Hands if not already running."""
     if sys.platform != "win32":
         return
+    try:
+        from platforms.vrchat.openvr_driver.install_driver import ensure_steamvr_chaperone
+        ensure_steamvr_chaperone()
+    except Exception as e:
+        print(f"[steamvr] Chaperone note: {e}")
     res = subprocess.run(["tasklist", "/FI", "IMAGENAME eq vrserver.exe", "/NH"], capture_output=True, text=True)
     if "vrserver.exe" in res.stdout.lower():
         print("[steamvr] SteamVR (vrserver.exe) is already running with driver_luna!")
@@ -127,6 +134,7 @@ def _configure_vrchat_registry_for_luna():
          never locks her walking/turning!)
       3. VRC_INPUT_MIC_DEVICE_NAME_VR = 'CABLE Output (VB-Audio Virtual Cable)'
       4. UI.Settings.Osc = 1 & VRC_INPUT_OSC = 1
+      5. Disable VRChat noise suppression & noise gate so Gawr Gura RVC speech never clips!
     """
     if sys.platform != "win32":
         return
@@ -142,13 +150,85 @@ def _configure_vrchat_registry_for_luna():
         winreg.SetValueEx(k, "VRC_MAIN_MENU_MOVEMENT_LOCKED_h1046269715", 0, winreg.REG_DWORD, 0)
         winreg.SetValueEx(k, "UI.Settings.Osc_h1043380067", 0, winreg.REG_DWORD, 1)
         winreg.SetValueEx(k, "VRC_INPUT_OSC_h1104161515", 0, winreg.REG_DWORD, 1)
+        winreg.SetValueEx(k, "VRC_INPUT_MIC_NOISE_SUPPRESSION_h2093770996", 0, winreg.REG_DWORD, 0)
         cable_bytes = b"CABLE Output (VB-Audio Virtual Cable)\x00"
         real_mic_bytes = b"Microphone Array (Realtek(R) Audio)\x00"
         winreg.SetValueEx(k, "VRC_INPUT_MIC_DEVICE_NAME_VR_h2729556311", 0, winreg.REG_BINARY, cable_bytes)
         winreg.SetValueEx(k, "VRC_INPUT_MIC_DEVICE_NAME_Desktop_h2596021377", 0, winreg.REG_BINARY, real_mic_bytes)
         winreg.CloseKey(k)
+
+        # Unity PlayerPrefs stores floats as 8-byte IEEE-754 doubles under REG_DWORD (4)
+        advapi32 = ctypes.windll.advapi32
+        hkey = ctypes.c_void_p()
+        rc = advapi32.RegOpenKeyExW(0x80000001, r"Software\VRChat\VRChat", 0, 0x0002, ctypes.byref(hkey))
+        if rc == 0:
+            try:
+                zero_double = struct.pack("<d", 0.0)
+                buf = ctypes.create_string_buffer(zero_double, 8)
+                advapi32.RegSetValueExW(
+                    hkey,
+                    "VRC_INPUT_MIC_NOISE_GATE_h1714811770",
+                    0,
+                    4,  # REG_DWORD (Unity 8-byte float storage)
+                    buf,
+                    8,
+                )
+            finally:
+                advapi32.RegCloseKey(hkey)
     except Exception as e:
         print(f"[registry] Note: could not update VRChat prefs: {e}")
+
+
+def _mute_luna_vrchat_process(muted_pids: set[int]) -> list[int]:
+    """
+    Finds ONLY Luna's VRChat.exe process (--profile=1) in Windows Volume Mixer and mutes it
+    so the user never hears duplicate audio from her game tab. Strictly skips --profile=0!
+    """
+    if sys.platform != "win32":
+        return []
+    newly_muted: list[int] = []
+    co_inited = False
+    try:
+        import comtypes
+        import psutil
+        from pycaw.pycaw import AudioUtilities
+
+        comtypes.CoInitialize()
+        co_inited = True
+
+        for session in AudioUtilities.GetAllSessions():
+            proc = session.Process
+            if proc is None:
+                continue
+            try:
+                pid = proc.pid
+                name = (proc.name() or "").lower()
+                if name != "vrchat.exe":
+                    continue
+                cmdline = " ".join(proc.cmdline()).lower()
+                if "--profile=1" not in cmdline or "--profile=0" in cmdline:
+                    continue
+                vol = session.SimpleAudioVolume
+                if vol is None:
+                    continue
+                if not vol.GetMute():
+                    vol.SetMute(1, None)
+                    newly_muted.append(pid)
+                muted_pids.add(pid)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            except Exception:
+                continue
+    except Exception:
+        pass
+    finally:
+        if co_inited:
+            try:
+                import comtypes
+                comtypes.CoUninitialize()
+            except Exception:
+                pass
+    return newly_muted
 
 
 def _kill_luna_profile1_vrchat():
@@ -268,7 +348,12 @@ def list_devices():
 class LunaInVRChat:
     def __init__(self, args):
         self.args = args
-        self.osc = VRChatOSC(host=getattr(args, "host", None), port=getattr(args, "port", None))
+        self.use_vr = getattr(args, "vr", False) or os.getenv("VRCHAT_VR_MODE", "false").lower() in ("true", "1", "yes")
+        self.osc = VRChatOSC(
+            host=getattr(args, "host", None),
+            port=getattr(args, "port", None),
+            use_vr=self.use_vr,
+        )
         self.world = VRChatWorldState(self_name=os.getenv("VRCHAT_LUNA_USER", "Luna") or "Luna")
         if getattr(args, "chill", False):
             self.world.set_behavior("chill", "hanging out in place")
@@ -281,8 +366,8 @@ class LunaInVRChat:
         self.last_user_activity = 0.0
         self.last_join_greet = 0.0
         self.last_auto_travel = 0.0
-        self.use_vr = getattr(args, "vr", False) or os.getenv("VRCHAT_VR_MODE", "false").lower() in ("true", "1", "yes")
         self.autonomy_enabled = not getattr(args, "no_autonomy", False)
+        self._muted_luna_pids: set[int] = set()
         # VRChat Talk-Gate Toggle: when True, Luna ONLY hears you when you talk in VRChat (Hold V or unmute in VRChat).
         # Press F8 anytime (or type 'toggle' in console) to switch between VRC-Talk-Only and Always-Listen!
         self.vrc_talk_only = not getattr(args, "always_listen", False)
@@ -496,23 +581,36 @@ class LunaInVRChat:
         print(f"{tag} [{chosen_action}] > {reply}")
 
         self.speaking = True
-        self.osc.vr_tracker.set_speaking(True)
         self.last_activity = time.time()
         use_ptt = not getattr(self.args, "no_ptt", False) and os.getenv("VRCHAT_PTT", "true").lower() not in ("false", "0", "no")
+
+        # Pre-render Gawr Gura RVC audio BEFORE opening PTT / chatbox so text, gestures, and voice start in sync
+        prepared = None
+        if self.voice:
+            self.osc.typing(True)
+            try:
+                prepared = await self.voice.prepare_audio(reply, emotion=chosen_action)
+            finally:
+                self.osc.typing(False)
+
+        self.osc.vr_tracker.set_speaking(True)
         try:
             if use_ptt:
                 # Hold Push-To-Talk open in VRChat (Mic Mode: PushToTalk) while audio plays into CABLE Input
                 self.osc.client.send_message("/input/Voice", 1)
-                await asyncio.sleep(0.08)
+                await asyncio.sleep(0.15)
             chat_task = asyncio.create_task(self.osc.say(reply))
             move_task = asyncio.create_task(self.osc.perform(chosen_action))
             if self.voice:
-                await self.voice.generate_and_play_audio(reply, emotion=chosen_action)
+                if prepared is not None:
+                    await self.voice.play_prepared_audio(*prepared)
+                else:
+                    await self.voice.generate_and_play_audio(reply, emotion=chosen_action)
             await asyncio.gather(chat_task, move_task, return_exceptions=True)
         finally:
             self.osc.vr_tracker.set_speaking(False)
             if use_ptt:
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.45)
                 self.osc.client.send_message("/input/Voice", 0)
             self.speaking = False
             self.last_activity = time.time()
@@ -702,9 +800,18 @@ class LunaInVRChat:
 
     # ── Main Entry Loop ────────────────────────────────────────────────────
 
+    async def _auto_mute_luna_tab_loop(self):
+        """Continuously ensures ONLY Luna's VRChat (--profile=1) window stays muted in Windows Volume Mixer."""
+        while True:
+            newly = await asyncio.to_thread(_mute_luna_vrchat_process, self._muted_luna_pids)
+            for pid in newly:
+                print(f"[audio] Auto-muted Luna's VRChat window (PID {pid}, --profile=1) in Windows Volume Mixer")
+            await asyncio.sleep(4.0)
+
     async def run(self):
         self.loop = asyncio.get_running_loop()
         asyncio.create_task(watch_vrchat_logs(self.world, self.on_vrc_event))
+        asyncio.create_task(self._auto_mute_luna_tab_loop())
         await asyncio.sleep(0.5)
         snap = self.world.snapshot()
 

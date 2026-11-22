@@ -135,11 +135,12 @@ class RVCv2Converter:
         if len(arr) < 400:
             return np.zeros((0, 2), dtype=np.float32)
 
-        # Trim leading/trailing silence before RVC so we only convert active speech!
-        nz = np.flatnonzero(np.abs(arr) > 0.008)
+        # Gentle silence trimming only so soft opening/closing consonants (s, f, h, t, k) stay intact
+        nz = np.flatnonzero(np.abs(arr) > 0.0015)
         if len(nz) > 0:
-            pad_in = int(sr_in * 0.04)
-            arr = arr[max(0, int(nz[0]) - pad_in):min(len(arr), int(nz[-1]) + pad_in)]
+            pad_start = int(sr_in * 0.08)
+            pad_end = int(sr_in * 0.18)
+            arr = arr[max(0, int(nz[0]) - pad_start):min(len(arr), int(nz[-1]) + pad_end)]
 
         # 1. Resample input to 16,000 Hz for ContentVec & Parselmouth
         if sr_in != 16000:
@@ -157,10 +158,16 @@ class RVCv2Converter:
         if max_amp > 1.0:
             audio_16k /= max_amp
 
-        # Minimal 0.06s reflection pad
-        t_pad = int(16000 * 0.06)
-        t_pad_tgt = int(self.tgt_sr * 0.06)
-        audio_pad = np.pad(audio_16k, (t_pad, t_pad), mode="reflect").astype(np.float32)
+        orig_16k_len = len(audio_16k)
+        expected_tgt_len = int(round(orig_16k_len * float(self.tgt_sr) / 16000.0))
+
+        # Constant zero silence pad: 400ms right padding absorbs ContentVec 7-layer CNN frame drop
+        # without ever truncating the final syllable of speech!
+        t_pad_left = int(16000 * 0.15)
+        t_pad_right = int(16000 * 0.40)
+        t_pad_left_tgt = int(round(t_pad_left * float(self.tgt_sr) / 16000.0))
+        extra_tail_tgt = int(round(0.10 * float(self.tgt_sr)))
+        audio_pad = np.pad(audio_16k, (t_pad_left, t_pad_right), mode="constant", constant_values=0.0).astype(np.float32)
         p_len = len(audio_pad) // self.window
 
         # 2. Extract F0 Pitch Contour
@@ -198,11 +205,20 @@ class RVCv2Converter:
         with torch.no_grad():
             audio_out = self.net_g.infer(feats[:, :p_len, :], p_len_t, pitch, pitchf, sid)[0][0, 0].cpu().numpy()
 
-        if len(audio_out) > 2 * t_pad_tgt:
-            audio_out = audio_out[t_pad_tgt:-t_pad_tgt]
+        start_idx = min(t_pad_left_tgt, max(0, len(audio_out) - 1))
+        end_idx = min(len(audio_out), start_idx + expected_tgt_len + extra_tail_tgt)
+        audio_out = audio_out[start_idx:end_idx]
+
+        # Gentle 10 ms edge fade to prevent clicks
+        fade = min(int(self.tgt_sr * 0.01), len(audio_out) // 4)
+        if fade > 0:
+            ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+            audio_out = audio_out.copy()
+            audio_out[:fade] *= ramp
+            audio_out[-fade:] *= ramp[::-1]
 
         # 6. Resample from 40,000 Hz -> 48,000 Hz stereo for VRChat
-        n_48k = int(round(len(audio_out) * 48000.0 / float(self.tgt_sr)))
+        n_48k = max(1, int(round(len(audio_out) * 48000.0 / float(self.tgt_sr))))
         s48 = np.interp(
             np.linspace(0.0, len(audio_out) - 1, n_48k, dtype=np.float32),
             np.arange(len(audio_out), dtype=np.float32),
@@ -212,5 +228,10 @@ class RVCv2Converter:
         peak = float(np.max(np.abs(s48)))
         if peak > 0.01:
             s48 = (s48 / peak) * 0.88
+
+        # Prepend 120ms & append 350ms zero silence so VB-Cable and VRChat uSpeak never clip start/tail
+        lead_sil = np.zeros(int(48000 * 0.12), dtype=np.float32)
+        tail_sil = np.zeros(int(48000 * 0.35), dtype=np.float32)
+        s48 = np.concatenate((lead_sil, s48, tail_sil))
 
         return np.column_stack((s48, s48))

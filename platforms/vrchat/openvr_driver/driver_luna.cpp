@@ -2,12 +2,15 @@
 // driver_luna.cpp — Custom OpenVR Virtual HMD + Left/Right Hand Controller Driver
 //
 // Gives Luna full 6-DOF Head (3D tilt/nod/turn/lean) + Left Arm/Hand + Right Arm/Hand
-// inside SteamVR & VRChat without needing a physical VR headset.
+// + native Oculus Touch joystick/button inputs inside SteamVR & VRChat without needing
+// a physical VR headset.
 //
-// Listens on UDP 127.0.0.1:27015 for 21 little-endian floats (84 bytes):
+// Listens on UDP 127.0.0.1:27015 for 25 little-endian floats (100 bytes)
+// (also backward-compatible with 21 floats / 84 bytes):
 //   [0..6]   HMD        (x, y, z, qw, qx, qy, qz)
 //   [7..13]  Left Hand  (x, y, z, qw, qx, qy, qz)
 //   [14..20] Right Hand (x, y, z, qw, qx, qy, qz)
+//   [21..24] Locomotion (left_joy_x, left_joy_y, right_joy_x, right_a_click)
 //=============================================================================
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -21,6 +24,7 @@
 #pragma comment(lib, "ws2_32.lib")
 
 #include "openvr_driver.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -35,11 +39,19 @@ struct Pose7 {
     float qw, qx, qy, qz;
 };
 
+struct LocomotionInput {
+    float left_joy_x = 0.0f;
+    float left_joy_y = 0.0f;
+    float right_joy_x = 0.0f;
+    float right_a_click = 0.0f;
+};
+
 static std::mutex g_pose_mutex;
-// 1.58m eye height matches VRChat's 1.675m PlayerHeight calibration so her knees stand 100% straight!
-static Pose7 g_hmd_pose   = {  0.00f, 1.58f,  0.00f, 1.0f, 0.0f, 0.0f, 0.0f };
-static Pose7 g_left_pose  = { -0.22f, 1.10f, -0.16f, 1.0f, 0.0f, 0.0f, 0.0f };
-static Pose7 g_right_pose = {  0.22f, 1.10f, -0.16f, 1.0f, 0.0f, 0.0f, 0.0f };
+// 1.68m eye height matches VRChat's 1.675m PlayerHeight calibration so her legs stand 100% straight!
+static Pose7 g_hmd_pose   = {  0.00f, 1.68f,  0.00f, 1.0f, 0.0f, 0.0f, 0.0f };
+static Pose7 g_left_pose  = { -0.22f, 1.18f, -0.16f, 1.0f, 0.0f, 0.0f, 0.0f };
+static Pose7 g_right_pose = {  0.22f, 1.18f, -0.16f, 1.0f, 0.0f, 0.0f, 0.0f };
+static LocomotionInput g_loco;
 static std::atomic<long long> g_last_udp_ms{ 0 };
 
 static long long NowMs() {
@@ -48,6 +60,7 @@ static long long NowMs() {
 }
 
 static vr::DriverPose_t MakeDriverPose(const Pose7& p, bool is_hmd) {
+    (void)is_hmd;
     vr::DriverPose_t pose = { 0 };
     pose.qWorldFromDriverRotation.w = 1.0;
     pose.qDriverFromHeadRotation.w = 1.0;
@@ -64,7 +77,8 @@ static vr::DriverPose_t MakeDriverPose(const Pose7& p, bool is_hmd) {
     pose.poseIsValid = true;
     pose.deviceIsConnected = true;
     pose.result = vr::TrackingResult_Running_OK;
-    pose.shouldApplyHeadModel = is_hmd;
+    // Direct 6-DOF head pose without neck-model offset shifting eye height down
+    pose.shouldApplyHeadModel = false;
     return pose;
 }
 
@@ -117,8 +131,7 @@ public:
     LunaHMDDriver() : display_(std::make_unique<LunaDisplayComponent>()) {}
 
     vr::EVRInitError Activate(uint32_t unObjectId) override {
-        device_index_ = unObjectId;
-        vr::PropertyContainerHandle_t c = vr::VRProperties()->TrackedDeviceToPropertyContainer(device_index_);
+        vr::PropertyContainerHandle_t c = vr::VRProperties()->TrackedDeviceToPropertyContainer(unObjectId);
         vr::VRProperties()->SetStringProperty(c, vr::Prop_ModelNumber_String, "Luna Virtual HMD");
         vr::VRProperties()->SetStringProperty(c, vr::Prop_ManufacturerName_String, "LunaAI");
         vr::VRProperties()->SetFloatProperty(c, vr::Prop_UserIpdMeters_Float, 0.063f);
@@ -128,13 +141,21 @@ public:
         vr::VRProperties()->SetUint64Property(c, vr::Prop_CurrentUniverseId_Uint64, 2);
         vr::VRProperties()->SetBoolProperty(c, vr::Prop_IsOnDesktop_Bool, false);
         vr::VRProperties()->SetBoolProperty(c, vr::Prop_DisplayDebugMode_Bool, true);
-        vr::VRProperties()->SetStringProperty(c, vr::Prop_InputProfilePath_String, "{htc}/input/vive_profile.json");
-        vr::VRProperties()->SetStringProperty(c, vr::Prop_ControllerType_String, "vive");
+        vr::VRProperties()->SetBoolProperty(c, vr::Prop_ContainsProximitySensor_Bool, true);
+        vr::VRProperties()->SetStringProperty(c, vr::Prop_InputProfilePath_String, "{oculus}/input/rift_profile.json");
+        vr::VRProperties()->SetStringProperty(c, vr::Prop_ControllerType_String, "rift");
+
+        vr::VRDriverInput()->CreateBooleanComponent(c, "/proximity", &prox_handle_);
+        vr::VRDriverInput()->CreateBooleanComponent(c, "/input/system/click", &sys_handle_);
+        vr::VRDriverInput()->UpdateBooleanComponent(prox_handle_, true, 0.0);
+        device_index_ = unObjectId;
         return vr::VRInitError_None;
     }
 
     void Deactivate() override {
         device_index_ = vr::k_unTrackedDeviceIndexInvalid;
+        prox_handle_ = vr::k_ulInvalidInputComponentHandle;
+        sys_handle_ = vr::k_ulInvalidInputComponentHandle;
     }
     void EnterStandby() override {}
     void* GetComponent(const char* pchComponentNameAndVersion) override {
@@ -155,10 +176,21 @@ public:
             vr::VRServerDriverHost()->TrackedDevicePoseUpdated(device_index_, GetPose(), sizeof(vr::DriverPose_t));
         }
     }
+    void PublishInputs() {
+        if (device_index_ == vr::k_unTrackedDeviceIndexInvalid) return;
+        if (prox_handle_ != vr::k_ulInvalidInputComponentHandle) {
+            vr::VRDriverInput()->UpdateBooleanComponent(prox_handle_, true, 0.0);
+        }
+        if (sys_handle_ != vr::k_ulInvalidInputComponentHandle) {
+            vr::VRDriverInput()->UpdateBooleanComponent(sys_handle_, false, 0.0);
+        }
+    }
 
 private:
     uint32_t device_index_ = vr::k_unTrackedDeviceIndexInvalid;
     std::unique_ptr<LunaDisplayComponent> display_;
+    vr::VRInputComponentHandle_t prox_handle_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t sys_handle_ = vr::k_ulInvalidInputComponentHandle;
 };
 
 //=============================================================================
@@ -169,8 +201,7 @@ public:
     explicit LunaControllerDriver(vr::ETrackedControllerRole role) : role_(role) {}
 
     vr::EVRInitError Activate(uint32_t unObjectId) override {
-        device_index_ = unObjectId;
-        vr::PropertyContainerHandle_t c = vr::VRProperties()->TrackedDeviceToPropertyContainer(device_index_);
+        vr::PropertyContainerHandle_t c = vr::VRProperties()->TrackedDeviceToPropertyContainer(unObjectId);
         bool is_left = (role_ == vr::TrackedControllerRole_LeftHand);
         vr::VRProperties()->SetStringProperty(c, vr::Prop_ModelNumber_String, is_left ? "Luna Left Hand" : "Luna Right Hand");
         vr::VRProperties()->SetStringProperty(c, vr::Prop_ManufacturerName_String, "LunaAI");
@@ -179,6 +210,35 @@ public:
         vr::VRProperties()->SetInt32Property(c, vr::Prop_DeviceClass_Int32, vr::TrackedDeviceClass_Controller);
         vr::VRProperties()->SetStringProperty(c, vr::Prop_InputProfilePath_String, "{oculus}/input/touch_profile.json");
         vr::VRProperties()->SetStringProperty(c, vr::Prop_ControllerType_String, "oculus_touch");
+
+        vr::IVRDriverInput* inp = vr::VRDriverInput();
+        inp->CreateScalarComponent(c, "/input/joystick/x", &joy_x_, vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedTwoSided);
+        inp->CreateScalarComponent(c, "/input/joystick/y", &joy_y_, vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedTwoSided);
+        inp->CreateBooleanComponent(c, "/input/joystick/click", &joy_click_);
+        inp->CreateBooleanComponent(c, "/input/joystick/touch", &joy_touch_);
+
+        inp->CreateScalarComponent(c, "/input/trigger/value", &trig_val_, vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedOneSided);
+        inp->CreateBooleanComponent(c, "/input/trigger/touch", &trig_touch_);
+
+        inp->CreateScalarComponent(c, "/input/grip/value", &grip_val_, vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedOneSided);
+        inp->CreateBooleanComponent(c, "/input/grip/touch", &grip_touch_);
+        inp->CreateBooleanComponent(c, "/input/thumbrest/touch", &thumb_touch_);
+        inp->CreateHapticComponent(c, "/output/haptic", &haptic_);
+
+        if (is_left) {
+            inp->CreateBooleanComponent(c, "/input/x/click", &btn1_click_);
+            inp->CreateBooleanComponent(c, "/input/x/touch", &btn1_touch_);
+            inp->CreateBooleanComponent(c, "/input/y/click", &btn2_click_);
+            inp->CreateBooleanComponent(c, "/input/y/touch", &btn2_touch_);
+            inp->CreateBooleanComponent(c, "/input/system/click", &sys_click_);
+            inp->CreateBooleanComponent(c, "/input/system/touch", &sys_touch_);
+        } else {
+            inp->CreateBooleanComponent(c, "/input/a/click", &btn1_click_);
+            inp->CreateBooleanComponent(c, "/input/a/touch", &btn1_touch_);
+            inp->CreateBooleanComponent(c, "/input/b/click", &btn2_click_);
+            inp->CreateBooleanComponent(c, "/input/b/touch", &btn2_touch_);
+        }
+        device_index_ = unObjectId;
         return vr::VRInitError_None;
     }
 
@@ -200,10 +260,47 @@ public:
             vr::VRServerDriverHost()->TrackedDevicePoseUpdated(device_index_, GetPose(), sizeof(vr::DriverPose_t));
         }
     }
+    void PublishInputs(float jx, float jy, bool primary_btn) {
+        if (device_index_ == vr::k_unTrackedDeviceIndexInvalid) return;
+        if (joy_x_ == vr::k_ulInvalidInputComponentHandle || joy_y_ == vr::k_ulInvalidInputComponentHandle) return;
+        vr::IVRDriverInput* inp = vr::VRDriverInput();
+        bool stick_active = (std::fabs(jx) > 0.02f || std::fabs(jy) > 0.02f);
+        inp->UpdateScalarComponent(joy_x_, jx, 0.0);
+        inp->UpdateScalarComponent(joy_y_, jy, 0.0);
+        if (joy_touch_ != vr::k_ulInvalidInputComponentHandle) {
+            inp->UpdateBooleanComponent(joy_touch_, stick_active, 0.0);
+        }
+        if (joy_click_ != vr::k_ulInvalidInputComponentHandle) {
+            inp->UpdateBooleanComponent(joy_click_, false, 0.0);
+        }
+        if (btn1_click_ != vr::k_ulInvalidInputComponentHandle) {
+            bool press = (role_ == vr::TrackedControllerRole_RightHand) ? primary_btn : false;
+            inp->UpdateBooleanComponent(btn1_click_, press, 0.0);
+            if (btn1_touch_ != vr::k_ulInvalidInputComponentHandle) {
+                inp->UpdateBooleanComponent(btn1_touch_, press, 0.0);
+            }
+        }
+    }
 
 private:
     vr::ETrackedControllerRole role_;
     uint32_t device_index_ = vr::k_unTrackedDeviceIndexInvalid;
+    vr::VRInputComponentHandle_t joy_x_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t joy_y_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t joy_click_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t joy_touch_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t trig_val_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t trig_touch_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t grip_val_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t grip_touch_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t thumb_touch_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t haptic_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t btn1_click_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t btn1_touch_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t btn2_click_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t btn2_touch_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t sys_click_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t sys_touch_ = vr::k_ulInvalidInputComponentHandle;
 };
 
 //=============================================================================
@@ -269,14 +366,22 @@ private:
             return;
         }
 
-        float buf[21];
+        float buf[25];
         while (running_) {
             int n = recv(sock_, reinterpret_cast<char*>(buf), sizeof(buf), 0);
-            if (n == sizeof(buf)) {
+            if (n == 25 * static_cast<int>(sizeof(float)) || n == 21 * static_cast<int>(sizeof(float))) {
                 std::lock_guard<std::mutex> lock(g_pose_mutex);
                 g_hmd_pose   = { buf[0],  buf[1],  buf[2],  buf[3],  buf[4],  buf[5],  buf[6]  };
                 g_left_pose  = { buf[7],  buf[8],  buf[9],  buf[10], buf[11], buf[12], buf[13] };
                 g_right_pose = { buf[14], buf[15], buf[16], buf[17], buf[18], buf[19], buf[20] };
+                if (n == 25 * static_cast<int>(sizeof(float))) {
+                    g_loco.left_joy_x    = std::max(-1.0f, std::min(1.0f, buf[21]));
+                    g_loco.left_joy_y    = std::max(-1.0f, std::min(1.0f, buf[22]));
+                    g_loco.right_joy_x   = std::max(-1.0f, std::min(1.0f, buf[23]));
+                    g_loco.right_a_click = buf[24];
+                } else {
+                    g_loco = LocomotionInput{};
+                }
                 g_last_udp_ms = NowMs();
             }
         }
@@ -286,19 +391,33 @@ private:
         double t = 0.0;
         while (running_) {
             long long age = NowMs() - g_last_udp_ms.load();
-            if (age > 1500) {
-                // Built-in fallback cutesy-smug breathing & subtle head tilt when Python isn't streaming yet
-                float breath = static_cast<float>(std::sin(t * 1.8) * 0.012);
-                float tilt_z = static_cast<float>(std::sin(t * 0.7) * 0.045); // ~5 deg subtle head tilt
-                float qw = std::sqrt(std::max(0.0f, 1.0f - tilt_z * tilt_z));
+            LocomotionInput loco_copy;
+            {
                 std::lock_guard<std::mutex> lock(g_pose_mutex);
-                g_hmd_pose   = {  0.00f, 1.58f + breath,  0.00f, qw, 0.0f, 0.0f, tilt_z };
-                g_left_pose  = { -0.22f, 1.10f + breath * 0.8f, -0.16f, 0.98f, 0.15f, 0.0f, 0.10f };
-                g_right_pose = {  0.22f, 1.10f + breath * 0.8f, -0.16f, 0.98f, 0.15f, 0.0f, -0.10f };
+                if (age > 1500) {
+                    // Built-in fallback cutesy-smug breathing & subtle head tilt when Python isn't streaming yet
+                    float breath = static_cast<float>(std::sin(t * 1.8) * 0.012);
+                    float tilt_z = static_cast<float>(std::sin(t * 0.7) * 0.045);
+                    float qw = std::sqrt(std::max(0.0f, 1.0f - tilt_z * tilt_z));
+                    g_hmd_pose   = {  0.00f, 1.68f + breath,  0.00f, qw, 0.0f, 0.0f, tilt_z };
+                    g_left_pose  = { -0.22f, 1.18f + breath * 0.8f, -0.16f, 0.98f, 0.15f, 0.0f, 0.10f };
+                    g_right_pose = {  0.22f, 1.18f + breath * 0.8f, -0.16f, 0.98f, 0.15f, 0.0f, -0.10f };
+                    g_loco = LocomotionInput{};
+                }
+                loco_copy = g_loco;
             }
-            if (hmd_)   hmd_->PublishPose();
-            if (left_)  left_->PublishPose();
-            if (right_) right_->PublishPose();
+            if (hmd_) {
+                hmd_->PublishPose();
+                hmd_->PublishInputs();
+            }
+            if (left_) {
+                left_->PublishPose();
+                left_->PublishInputs(loco_copy.left_joy_x, loco_copy.left_joy_y, false);
+            }
+            if (right_) {
+                right_->PublishPose();
+                right_->PublishInputs(loco_copy.right_joy_x, 0.0f, loco_copy.right_a_click > 0.5f);
+            }
 
             t += 0.011;
             std::this_thread::sleep_for(std::chrono::milliseconds(11)); // ~90 Hz

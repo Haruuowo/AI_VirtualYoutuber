@@ -150,6 +150,32 @@ class VoiceHandler:
         sd.play(data, samplerate, device=self.device_id)
         sd.wait()
 
+    async def prepare_audio(self, text: str, emotion: str | None = None) -> tuple[np.ndarray, int] | None:
+        """Pre-synthesizes full continuous audio buffer before opening VRChat PTT (/input/Voice=1)."""
+        if not self.tts_enabled or not text:
+            return None
+        if self.tts_engine in ('gura', 'rvc'):
+            try:
+                gura_48k = await self._synthesize_gura_rvc(text, emotion=emotion)
+                if gura_48k is not None and len(gura_48k) > 0:
+                    return (gura_48k, 48000)
+            except Exception as e:
+                print(f"Gura RVC v2 prepare error: {e}")
+        return None
+
+    async def play_prepared_audio(self, samples: np.ndarray, samplerate: int):
+        """Plays an already-prepared audio buffer cleanly while managing is_speaking state."""
+        if not self.tts_enabled or samples is None or len(samples) == 0:
+            return
+        try:
+            self.is_speaking = True
+            await asyncio.to_thread(self._play_samples, samples, samplerate)
+        except Exception as e:
+            print(f"Prepared audio playback error: {e}")
+        finally:
+            await asyncio.sleep(0.25)
+            self.is_speaking = False
+
     async def generate_and_play_audio(self, text, emotion: str | None = None):
         if not self.tts_enabled or not text:
             return
@@ -180,51 +206,49 @@ class VoiceHandler:
         except Exception as e:
             print(f"Audio error: {e}")
         finally:
-            time.sleep(0.25)
+            await asyncio.sleep(0.25)
             self.is_speaking = False
 
-    async def _play_gura_rvc(self, text: str, emotion: str | None = None) -> bool:
+    async def _synthesize_gura_rvc(self, text: str, emotion: str | None = None) -> np.ndarray | None:
         """
-        Synthesizes expressive speech clauses with `en-US-AnaNeural` and converts each
-        clause through the Gawr Gura RVC v2 model (`GuraTalkV2.pth`), pipelining clause
-        N+1 conversion while clause N plays into VRChat!
+        Synthesizes the full reply with `en-US-AnaNeural` and converts it as ONE continuous
+        buffer through Gawr Gura RVC v2 (`GuraTalkV2.pth`) so there is never a multi-second
+        mid-sentence gap on CPU.
         """
+        full_text = text.strip()
+        if not full_text:
+            return None
+
+        import edge_tts
+        from luna.rvc_infer.converter import get_gura_converter
+
+        conv = await asyncio.to_thread(get_gura_converter)
+        pitch, rate = self._get_neuro_edge_prosody(full_text, emotion=emotion)
+        stamp = int(time.time() * 1000)
+        mp3_p = os.path.join(BASE_DIR, f"temp_gura_{os.getpid()}_{stamp}.mp3")
+        wav_p = os.path.join(BASE_DIR, f"temp_gura_{os.getpid()}_{stamp}.wav")
         try:
-            import edge_tts
-            from luna.rvc_infer.converter import get_gura_converter
+            comm = edge_tts.Communicate(full_text, self.edge_voice, pitch=pitch, rate=rate)
+            await comm.save(mp3_p)
+            await asyncio.to_thread(mp3_to_wav, mp3_p, wav_p)
+            data, sr = sf.read(wav_p)
+            return await asyncio.to_thread(
+                conv.convert_to_48k_stereo, data, sr, 0.0, 0.33
+            )
+        finally:
+            for p in (mp3_p, wav_p):
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
 
-            conv = await asyncio.to_thread(get_gura_converter)
-            clauses = [c.strip() for c in _SENTENCE_SPLIT_RE.split(text.strip()) if c.strip()]
-            if not clauses:
+    async def _play_gura_rvc(self, text: str, emotion: str | None = None) -> bool:
+        try:
+            gura_48k = await self._synthesize_gura_rvc(text, emotion=emotion)
+            if gura_48k is None or len(gura_48k) == 0:
                 return False
-
-            async def _synth_gura_clause(idx: int, clause: str) -> np.ndarray:
-                pitch, rate = self._get_neuro_edge_prosody(clause, emotion=emotion)
-                mp3_p = os.path.join(BASE_DIR, f"temp_gura_{os.getpid()}_{idx}.mp3")
-                wav_p = os.path.join(BASE_DIR, f"temp_gura_{os.getpid()}_{idx}.wav")
-                try:
-                    comm = edge_tts.Communicate(clause, self.edge_voice, pitch=pitch, rate=rate)
-                    await comm.save(mp3_p)
-                    await asyncio.to_thread(mp3_to_wav, mp3_p, wav_p)
-                    data, sr = sf.read(wav_p)
-                    return await asyncio.to_thread(
-                        conv.convert_to_48k_stereo, data, sr, 0.0, 0.33
-                    )
-                finally:
-                    for p in (mp3_p, wav_p):
-                        if os.path.exists(p):
-                            try:
-                                os.remove(p)
-                            except OSError:
-                                pass
-
-            next_task = asyncio.create_task(_synth_gura_clause(0, clauses[0]))
-            for i in range(len(clauses)):
-                gura_48k = await next_task
-                if i + 1 < len(clauses):
-                    next_task = asyncio.create_task(_synth_gura_clause(i + 1, clauses[i + 1]))
-                if len(gura_48k) > 0:
-                    await asyncio.to_thread(self._play_samples, gura_48k, 48000)
+            await asyncio.to_thread(self._play_samples, gura_48k, 48000)
             return True
         except Exception as e:
             print(f"Gura RVC v2 error: {e}")

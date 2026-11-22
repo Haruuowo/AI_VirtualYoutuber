@@ -15,3 +15,5 @@ uvicorn
 python-osc
 ultralytics
 kokoro-onnx
+pycaw
+psutil
