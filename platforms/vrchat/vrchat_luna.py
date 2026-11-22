@@ -614,6 +614,8 @@ class LunaInVRChat:
                 # Hold Push-To-Talk open in VRChat (Mic Mode: PushToTalk) while audio plays into CABLE Input
                 self.osc.client.send_message("/input/Voice", 1)
                 await asyncio.sleep(0.15)
+            if prepared is not None:
+                self.osc.vr_tracker.set_speech_envelope(*prepared)
             chat_task = asyncio.create_task(self.osc.say(reply))
             move_task = asyncio.create_task(self.osc.perform(chosen_action))
             if self.voice:

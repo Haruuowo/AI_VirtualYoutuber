@@ -59,6 +59,9 @@ class VirtualVRPoseController:
         self._loco_forward = 0.0
         self._loco_turn = 0.0
         self._loco_jump = 0.0
+        self._speech_env: list[float] = []
+        self._speech_start_ts = 0.0
+        self._speech_fps = 60.0
         self._running = False
         self._thread: threading.Thread | None = None
 
@@ -74,6 +77,52 @@ class VirtualVRPoseController:
 
     def set_speaking(self, speaking: bool):
         self.speaking = bool(speaking)
+        if not self.speaking:
+            self._speech_env = []
+        elif self._speech_env:
+            self._speech_start_ts = time.monotonic()
+
+    def set_speech_envelope(self, samples, samplerate: int):
+        """
+        Extracts a 60 Hz smoothed RMS energy envelope (0.0..1.0) from pre-rendered TTS audio
+        so Luna's head nods, hand gestures, and torso bounce sync to her real spoken syllables.
+        """
+        try:
+            import numpy as np
+            arr = np.asarray(samples, dtype=np.float32)
+            if arr.ndim == 2:
+                arr = arr[:, 0]
+            arr = arr.ravel()
+            step = max(1, int(round(samplerate / self._speech_fps)))
+            n_frames = len(arr) // step
+            if n_frames <= 0:
+                self._speech_env = []
+                return
+            frames = arr[: n_frames * step].reshape(n_frames, step)
+            rms = np.sqrt(np.mean(frames * frames, axis=1))
+            nonzero = rms[rms > 0.005]
+            ref = float(np.percentile(nonzero, 92)) if len(nonzero) > 0 else 0.1
+            ref = max(ref, 0.02)
+            norm = np.clip(rms / ref, 0.0, 1.2)
+            # Smooth attack/release so arm & head motion flows organically
+            smoothed = []
+            prev = 0.0
+            for v in norm.tolist():
+                alpha = 0.45 if v > prev else 0.22
+                prev = prev + alpha * (min(1.0, v) - prev)
+                smoothed.append(prev)
+            self._speech_env = smoothed
+            self._speech_start_ts = time.monotonic()
+        except Exception:
+            self._speech_env = []
+
+    def _current_speech_energy(self, t: float) -> float:
+        if not self._speech_env:
+            return 0.5 + 0.5 * math.sin(t * 5.2)
+        idx = int((t - self._speech_start_ts) * self._speech_fps)
+        if 0 <= idx < len(self._speech_env):
+            return self._speech_env[idx]
+        return 0.0
 
     def set_gaze_offset(self, offset_norm: float):
         """Points her 3D VR head directly toward the detected person (-1.0 left .. +1.0 right)."""
@@ -252,19 +301,23 @@ class VirtualVRPoseController:
             r_x, r_y, r_z = 0.14, 1.70, -0.20
             r_pitch, r_yaw = 70.0, scan * 0.5
 
-        # ── Conversational Hand-Talking Overlay When Speaking ──────────────
+        # ── Audio-Synced Conversational Hand & Head Talking Overlay ────────
         if self.speaking and act in ("idle", "cutesy_idle", "stare_smug"):
-            # Natural VR conversational hand & head movement while she talks!
-            talk_t = t * 5.2
-            h_pitch += math.sin(talk_t) * 4.5
-            h_roll += math.cos(talk_t * 0.7) * 5.0
-            l_y = _lerp(l_y, 1.36 + math.sin(talk_t) * 0.06, 0.75)
-            r_y = _lerp(r_y, 1.38 + math.cos(talk_t * 1.1) * 0.07, 0.85)
-            l_z = _lerp(l_z, -0.26 + math.cos(talk_t) * 0.04, 0.75)
-            r_z = _lerp(r_z, -0.28 + math.sin(talk_t) * 0.05, 0.85)
-            l_x = -0.22 - abs(math.sin(talk_t * 0.8)) * 0.06
-            r_x =  0.22 + abs(math.cos(talk_t * 0.9)) * 0.07
-            l_pitch, r_pitch = 30.0, 32.0
+            # Driven by live 60 Hz RMS speech envelope so nods & hand gestures match real syllables!
+            energy = self._current_speech_energy(t)
+            talk_t = t * 4.2
+            h_pitch += -energy * 6.5 + math.sin(talk_t) * (1.5 + energy * 3.0)
+            h_roll += math.cos(talk_t * 0.7) * (2.5 + energy * 5.5)
+            h_z -= energy * 0.025
+            lift = 0.03 + energy * 0.14
+            l_y = _lerp(l_y, 1.24 + lift * 0.7 + math.sin(talk_t) * 0.03 * energy, 0.80)
+            r_y = _lerp(r_y, 1.26 + lift + math.cos(talk_t * 1.1) * 0.04 * energy, 0.88)
+            l_z = _lerp(l_z, -0.22 - energy * 0.08 + math.cos(talk_t) * 0.03, 0.80)
+            r_z = _lerp(r_z, -0.24 - energy * 0.10 + math.sin(talk_t) * 0.04, 0.88)
+            l_x = -0.22 - energy * 0.07 * abs(math.sin(talk_t * 0.8))
+            r_x =  0.22 + energy * 0.08 * abs(math.cos(talk_t * 0.9))
+            l_pitch = 22.0 + energy * 18.0
+            r_pitch = 24.0 + energy * 22.0
 
         hq = euler_deg_to_quat(h_pitch, h_yaw, h_roll)
         lq = euler_deg_to_quat(l_pitch, l_yaw, l_roll)

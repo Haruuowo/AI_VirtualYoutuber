@@ -98,7 +98,7 @@ class RVCv2Converter:
         self.net_g.load_state_dict(ckpt["weight"], strict=False)
         self.net_g.eval().to(self.device).float()
 
-        # Remove weight_norm overhead for faster CPU inference
+        # Remove weight_norm overhead for faster inference
         for m in self.net_g.modules():
             try:
                 torch.nn.utils.remove_weight_norm(m)
@@ -106,6 +106,20 @@ class RVCv2Converter:
                 pass
 
         self.bh, self.ah = scipy.signal.butter(N=5, Wn=48, btype="high", fs=16000)
+
+        # Warm up CUDA kernels at startup so the very first spoken reply is instant
+        if self.device.type == "cuda":
+            try:
+                with torch.no_grad():
+                    dummy_f = torch.zeros((1, 20, 768), device=self.device, dtype=torch.float32)
+                    dummy_l = torch.tensor([20], device=self.device, dtype=torch.long)
+                    dummy_p = torch.ones((1, 20), device=self.device, dtype=torch.long)
+                    dummy_pf = torch.ones((1, 20), device=self.device, dtype=torch.float32) * 200.0
+                    dummy_sid = torch.tensor([0], device=self.device, dtype=torch.long)
+                    self.net_g.infer(dummy_f, dummy_l, dummy_p, dummy_pf, dummy_sid)
+                torch.cuda.synchronize()
+            except Exception:
+                pass
 
     def _extract_f0(self, audio_16k: np.ndarray, p_len: int, f0_up_key: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
         time_step = (self.window / self.sr_in)
