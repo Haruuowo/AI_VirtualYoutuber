@@ -272,6 +272,26 @@ def travel_luna_to_instance(target_instance: str, use_vr: bool = True):
     subprocess.Popen(luna_args, cwd=str(vrc_dir))
 
 
+def _is_luna_profile1_running() -> bool:
+    """Checks live VRChat.exe command lines so Profile 0 is never mistaken for Luna's Profile 1."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import psutil
+        for proc in psutil.process_iter(["name", "cmdline"]):
+            try:
+                if (proc.info["name"] or "").lower() != "vrchat.exe":
+                    continue
+                cmd = " ".join(proc.info["cmdline"] or []).lower()
+                if "--profile=1" in cmd and "--profile=0" not in cmd:
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
 def ensure_luna_vrchat_window(use_vr: bool = True):
     """
     Launches ONLY Luna's VRChat window (Profile 1, OSC port 9002) ONCE if it isn't
@@ -296,8 +316,7 @@ def ensure_luna_vrchat_window(use_vr: bool = True):
     if target_instance:
         luna_args.append(f"vrchat://launch?id={target_instance}")
 
-    count = _count_vrchat_processes()
-    if count == 0 or (count == 1 and not _newest_log_is_profile1()):
+    if not _is_luna_profile1_running():
         mode_lbl = "6-DOF STEAMVR MODE" if use_vr else "Desktop Mode"
         print(f"[launcher] Opening LUNA's VRChat window (Profile 1, {mode_lbl}, 854x480, OSC 9002) -> {target_instance}")
         subprocess.Popen(luna_args, cwd=str(vrc_dir))
