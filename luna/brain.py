@@ -143,7 +143,7 @@ class AIHandler:
                 if "gpt-oss" in m_low:
                     return dict(
                         model=target_model,
-                        max_tokens=max(max_tokens, 160),
+                        max_tokens=max(max_tokens, 220),
                         temperature=temperature,
                         reasoning_effort="low",
                         messages=messages,
@@ -155,35 +155,49 @@ class AIHandler:
                     messages=messages,
                 )
 
+            groq_pool = (
+                self.model,
+                "qwen/qwen3.8-27b",
+                "openai/gpt-oss-safeguard-20b",
+                "openai/gpt-oss-120b",
+                "openai/gpt-oss-20b",
+            )
+            tried = set()
+            last_err = None
+            for target_model in groq_pool:
+                if not target_model or target_model in tried:
+                    continue
+                tried.add(target_model)
+                try:
+                    resp = self.client.chat.completions.create(**_make_groq_kwargs(target_model))
+                    text = (resp.choices[0].message.content or "").strip()
+                    if not text:
+                        continue
+                    if target_model != self.model:
+                        print(f"[AI Failover] {self.model} rate-limited -> switched active brain to {target_model}")
+                        self.model = target_model
+                    return text
+                except Exception as e:
+                    last_err = e
+                    err_str = str(e)
+                    if '429' in err_str or 'rate_limit' in err_str:
+                        continue
+                    raise
+
+            print(f"[AI Fallback] All Groq pools rate-limited. Seamlessly falling back to local Ollama...")
             try:
-                response = self.client.chat.completions.create(**_make_groq_kwargs(self.model))
-                return response.choices[0].message.content
-            except Exception as e:
-                err_str = str(e)
-                if '429' in err_str or 'rate_limit' in err_str:
-                    # Instantly fail over across all 3 separate Groq daily token pools and stick to the working model!
-                    for fallback_model in ("qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"):
-                        if fallback_model == self.model:
-                            continue
-                        try:
-                            resp = self.client.chat.completions.create(**_make_groq_kwargs(fallback_model))
-                            print(f"[AI Failover] {self.model} rate-limited -> switched active brain to {fallback_model}")
-                            self.model = fallback_model
-                            return resp.choices[0].message.content
-                        except Exception:
-                            pass
-                    print(f"[AI Fallback] All Groq pools rate-limited. Seamlessly falling back to local Ollama...")
-                    try:
-                        import ollama
-                        resp = ollama.chat(
-                            model=os.getenv('OLLAMA_MODEL', 'dolphin-llama3:8b'),
-                            messages=messages,
-                            options={"temperature": temperature, "num_predict": max_tokens}
-                        )
-                        return resp['message']['content']
-                    except Exception:
-                        pass
-                raise
+                import ollama
+                resp = ollama.chat(
+                    model=os.getenv('OLLAMA_MODEL', 'dolphin-llama3:8b'),
+                    messages=messages,
+                    options={"temperature": temperature, "num_predict": max_tokens}
+                )
+                return resp['message']['content']
+            except Exception:
+                pass
+            if last_err is not None:
+                raise last_err
+            raise RuntimeError("All Groq models returned empty responses.")
 
     def _build_system_prompt(self, mood: str, query: str = "") -> str:
         """Constructs system prompt with current mood, live world context, long-term memory, and Hugging Face dataset examples."""
@@ -202,7 +216,7 @@ class AIHandler:
 
     def _build_messages(self, system):
         messages = [{"role": "system", "content": system}]
-        for msg in list(self.memory):
+        for msg in list(self.memory)[-6:]:
             messages.append(msg)
         return messages
 

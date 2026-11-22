@@ -1040,7 +1040,7 @@ class LunaInVRChat:
 
     async def mind_loop(self):
         """Gives Luna free will to look around her VRChat view and comment on what she sees."""
-        base_interval = max(15, int(getattr(self.args, "think_every", 38) or 38))
+        base_interval = max(30, int(getattr(self.args, "think_every", 85) or 85))
         while True:
             wait_s = random.uniform(base_interval * 0.8, base_interval * 1.35)
             await asyncio.sleep(wait_s)
