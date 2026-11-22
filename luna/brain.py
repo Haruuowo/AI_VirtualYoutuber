@@ -28,6 +28,7 @@ VALID_ACTIONS = {
     "backflip", "sad_kick", "play_dead", "cutesy_idle", "step_back",
     "curious_approach", "walk_forward", "walk_back", "look_around",
     "wander_step", "turn_left", "turn_right", "spin", "happy_hop", "stop",
+    "headpat", "boop", "sassy_react", "stick",
 }
 
 

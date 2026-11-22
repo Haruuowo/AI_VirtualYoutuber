@@ -166,44 +166,74 @@ class VRChatOSC:
         self.client.send_message("/tracking/eye/LeftRightPitchYaw", [float(pitch), float(yaw), float(pitch), float(yaw)])
         self.client.send_message("/tracking/eye/EyesClosedAmount", float(max(0.0, min(1.0, closed))))
 
-    def apply_cutesy_smug_face(self, blush: float = 0.4, happy: bool = True, sleepy_smug: bool = False):
-        """Applies a persistent cutesy-smug facial expression across her avatar parameters."""
+    def apply_cutesy_smug_face(
+        self,
+        blush: float = 0.45,
+        happy: bool = True,
+        sleepy_smug: bool = True,
+        emotion_idx: int = 1,
+        exp_mod_l: bool = True,
+        exp_mod_r: bool = False,
+    ):
+        """
+        Applies facial expressions tailored specifically to Luna's 'Colibri Blind' avatar
+        (plus standard VRChat SDK3 fallback parameters):
+          - BlushLock=True + Blush float (Colibri resets Blush to 0 unless BlushLock is True!)
+          - Emotion & EmotionIDX (0..7) + ExpModL / ExpModR expression modifiers
+          - Sleepy=True for her signature half-lidded smug eyes
+          - BlinkEnabled=True so her custom eyelid blinker stays active
+        """
+        b_val = float(max(0.0, min(1.0, blush)))
+        self.set_param("BlushLock", b_val > 0.05)
+        self.set_param("Blush", b_val)
         self.set_param("Happy", bool(happy))
-        self.set_param("Blush", float(max(0.0, min(1.0, blush))))
         self.set_param("Sleepy", bool(sleepy_smug))
-        # Colibri Blind expression modifier & standard Emotion slot
-        self.set_param("ExpModL", bool(happy))
-        self.set_param("Emotion", 1 if happy else 0)
-        # Blendtree facial expression support (for avatars using VRCFaceBlendH/V)
-        self.set_param("VRCFaceBlendH", 0.55 if happy else 0.0)
-        self.set_param("VRCFaceBlendV", 0.35)
+        self.set_param("BlinkEnabled", True)
+        # Colibri Blind expression selectors & modifiers
+        self.set_param("ExpModL", bool(exp_mod_l))
+        self.set_param("ExpModR", bool(exp_mod_r))
+        self.set_param("Emotion", int(emotion_idx))
+        self.set_param("EmotionIDX", int(emotion_idx))
+        # Standard BlendTree facial expression fallback
+        self.set_param("VRCFaceBlendH", 0.55 if happy else -0.4)
+        self.set_param("VRCFaceBlendV", 0.35 if sleepy_smug else 0.0)
         self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.22 if sleepy_smug else 0.14)
+
+    async def trigger_colibri_blink(self):
+        """Triggers Colibri Blind's custom /avatar/parameters/Blink eyelid animation."""
+        self.set_param("Blink", True)
+        self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.88)
+        await asyncio.sleep(0.14)
+        self.set_param("Blink", False)
+        self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.18)
 
     async def lock_gaze_on_offset(self, offset: float):
         """
         Turns Luna's head/body toward `offset` (-1.0 left .. +1.0 right) so she centers
         the speaker in her view and locks her eyes straight on them.
         """
-        self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=False)
-        self.set_eyes(pitch=-2.0, yaw=float(offset * 12.0), closed=0.14)
+        self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=True, emotion_idx=1)
+        self.set_eyes(pitch=-2.0, yaw=float(offset * 12.0), closed=0.16)
         if abs(offset) > 0.20:
             speed = 0.45 if offset > 0 else -0.45
             dur = min(0.45, max(0.10, abs(offset) * 0.38))
             await self.turn(speed=speed, duration=dur)
-        self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.15)
+        self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.16)
 
-    async def emote(self, emote_id: int, duration: float = 2.8, happy: bool = True, blush: float = 0.45):
+    async def emote(self, emote_id: int, duration: float = 2.8, happy: bool = True, blush: float = 0.45, emotion_idx: int = 1):
         """
         Triggers a standard VRChat SDK3 hand/body emote (/avatar/parameters/VRCEmote 1..8)
-        while maintaining her cutesy-smug facial expression.
+        plus Colibri Blind's DoingEmote flag while maintaining her facial expression.
         """
         try:
-            self.apply_cutesy_smug_face(blush=blush, happy=happy)
+            self.apply_cutesy_smug_face(blush=blush, happy=happy, emotion_idx=emotion_idx)
+            self.set_param("DoingEmote", True)
             self.set_param("VRCEmote", int(emote_id))
             await asyncio.sleep(max(0.5, duration))
         finally:
             self.set_param("VRCEmote", 0)
-            self.apply_cutesy_smug_face(blush=0.35, happy=True)
+            self.set_param("DoingEmote", False)
+            self.apply_cutesy_smug_face(blush=0.40, happy=True, sleepy_smug=True, emotion_idx=1)
 
     # ── High-Level Expressive Actions & Autonomous Body Language ───────────
 
@@ -239,28 +269,66 @@ class VRChatOSC:
             await self.emote(8, duration=3.5)
 
         elif action == "blush":
-            self.apply_cutesy_smug_face(blush=1.0, happy=True, sleepy_smug=True)
-            await self.emote(7, duration=2.5, happy=True, blush=1.0)
+            self.apply_cutesy_smug_face(blush=1.0, happy=True, sleepy_smug=True, emotion_idx=3, exp_mod_l=True, exp_mod_r=True)
+            self.set_param("Headpat", True)
+            await self.emote(7, duration=2.4, happy=True, blush=1.0, emotion_idx=3)
+            self.set_param("Headpat", False)
+
+        elif action == "headpat":
+            self.apply_cutesy_smug_face(blush=0.9, happy=True, sleepy_smug=True, emotion_idx=2)
+            self.set_param("Headpat", True)
+            await asyncio.sleep(2.2)
+            self.set_param("Headpat", False)
+
+        elif action == "boop":
+            self.apply_cutesy_smug_face(blush=0.75, happy=True, sleepy_smug=False, emotion_idx=4, exp_mod_r=True)
+            self.set_param("EmoteRand_Boop", random.randint(1, 3))
+            self.set_param("Boop", True)
+            await asyncio.sleep(1.8)
+            self.set_param("Boop", False)
+
+        elif action == "sassy_react":
+            # Triggers Colibri Blind's built-in sassy/shocked face reaction + stick prop
+            self.apply_cutesy_smug_face(blush=0.55, happy=False, sleepy_smug=True, emotion_idx=5, exp_mod_l=False, exp_mod_r=True)
+            self.set_param("EmoteRand_Slap", random.randint(1, 3))
+            self.set_param("Slap", True)
+            await asyncio.sleep(1.6)
+            self.set_param("Slap", False)
+            self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=True, emotion_idx=1)
+
+        elif action == "stick":
+            # Toggles Colibri Blind's hand stick prop ('Sticc') and points/waves it!
+            self._stick_on = not getattr(self, "_stick_on", False)
+            self.set_param("Sticc", self._stick_on)
+            await self.emote(3, duration=2.2, happy=True, blush=0.45, emotion_idx=2)
 
         elif action == "stare_smug":
-            # Stationary cutesy-smug stare: stays locked on you with a slow smug blink & subtle blush
-            self.apply_cutesy_smug_face(blush=0.55, happy=True, sleepy_smug=True)
-            self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.28)
-            await asyncio.sleep(0.35)
-            self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.14)
-            await asyncio.sleep(0.6)
+            # Stationary cutesy-smug stare using Colibri Blind's Sleepy + BlushLock + EmotionIDX + Blink
+            self.apply_cutesy_smug_face(
+                blush=0.60,
+                happy=True,
+                sleepy_smug=True,
+                emotion_idx=random.choice([1, 2]),
+                exp_mod_l=True,
+                exp_mod_r=random.choice([True, False]),
+            )
+            await self.trigger_colibri_blink()
+            await asyncio.sleep(0.5)
 
         elif action == "cutesy_idle":
-            # Natural cutesy-smug idle animation: pure facial/eye animation (no body strafe twitching!)
-            # so her avatar's built-in Unity breathing/idle animation plays smoothly.
-            self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=random.choice([True, False]))
+            # Natural cutesy-smug idle animation driving Colibri Blind's actual Blink & EmotionIDX parameters
+            self.apply_cutesy_smug_face(
+                blush=0.45,
+                happy=True,
+                sleepy_smug=random.choice([True, True, False]),
+                emotion_idx=random.choice([1, 2, 3]),
+                exp_mod_l=True,
+                exp_mod_r=False,
+            )
             glance = random.choice([-10.0, 10.0, 0.0])
             self.set_eyes(pitch=-2.0, yaw=glance, closed=0.22)
-            await asyncio.sleep(0.30)
-            # Slow cute blink then return eyes to center stare
-            self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.85)
-            await asyncio.sleep(0.14)
-            self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.16)
+            await asyncio.sleep(0.28)
+            await self.trigger_colibri_blink()
 
         elif action == "jump":
             await self.jump()
@@ -323,21 +391,25 @@ class VRChatOSC:
     @staticmethod
     def pick_reaction_for_reply(reply_text: str) -> str:
         """
-        Chooses a natural, stationary gesture while talking so she keeps staring
+        Chooses a natural, stationary gesture/expression while talking so she keeps staring
         right at you instead of turning away mid-sentence.
         """
         low = reply_text.lower()
         if any(w in low for w in ("hi ", "hey", "hello", "welcome", "nice to meet", "sup", "wave", "bye", "see ya")):
             return "wave"
-        if any(w in low for w in ("haha", "lol", "yay", "hype", "lets go", "let's go", "awesome", "love", "congrats", "nice")):
+        if any(w in low for w in ("haha", "lol", "yay", "hype", "lets go", "let's go", "awesome", "love", "congrats", "nice", "gold star", "bare minimum")):
             return random.choice(["clap", "cheer", "stare_smug"])
-        if any(w in low for w in ("dance", "vibe", "music", "groove", "party")):
+        if any(w in low for w in ("dance", "vibe", "music", "groove", "party", "watch and learn")):
             return "dance"
-        if any(w in low for w in ("you", "your", "that", "there", "look at", "check out", "point", "blame")):
-            return random.choice(["point", "stare_smug", "stare_smug"])
-        if any(w in low for w in ("cute", "blush", "flatter", "sweet", "aw", "shy", "pretty")):
+        if any(w in low for w in ("stick", "bonk", "weapon", "hit", "poke")):
+            return "stick"
+        if any(w in low for w in ("excuse", "rude", "what?", "who?", "fault", "blame", "shut", "unplug", "npc")):
+            return random.choice(["sassy_react", "point", "stare_smug"])
+        if any(w in low for w in ("you", "your", "that", "there", "look at", "check out", "point")):
+            return random.choice(["point", "stare_smug", "sassy_react"])
+        if any(w in low for w in ("cute", "blush", "flatter", "sweet", "aw", "shy", "pretty", "headpat")):
             return "blush"
-        return random.choice(["stare_smug", "stare_smug", "cutesy_idle", "point"])
+        return random.choice(["stare_smug", "stare_smug", "cutesy_idle", "point", "sassy_react"])
 
 
 def detect_movement_request(text: str) -> tuple[str | None, str | None]:
@@ -374,6 +446,12 @@ def detect_movement_request(text: str) -> tuple[str | None, str | None]:
         return (None, "play_dead")
     if re.search(r"\b(sad|pout|shy)\b", low):
         return (None, "sad_kick")
+    if re.search(r"\b(headpat|pat your head|good girl)\b", low):
+        return (None, "headpat")
+    if re.search(r"\b(boop|poke your nose)\b", low):
+        return (None, "boop")
+    if re.search(r"\b(stick|sticc|bonk|pull out your stick)\b", low):
+        return (None, "stick")
 
     # Direct physical locomotion requests
     if re.search(r"\b(come here|walk forward|step forward|closer|follow me|come to me)\b", low):
