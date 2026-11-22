@@ -41,19 +41,80 @@ def _get_kokoro():
     return _KOKORO_INSTANCE
 
 
-def _upsample_24k_to_48k_stereo(samples_24k: np.ndarray) -> np.ndarray:
+def _shape_vtuber_voice_48k_stereo(
+    samples_24k: np.ndarray,
+    clause: str = "",
+    emotion: str | None = None,
+    base_pitch: float = 1.15,
+) -> np.ndarray:
     """
-    Converts Kokoro's 24,000 Hz mono float32 output to 48,000 Hz stereo (N, 2)
-    directly in memory (<0.2ms, zero disk I/O or ffmpeg subprocess needed) so
-    VB-Cable and VRChat (48000 Hz) receive crystal-clear audio.
+    Converts Kokoro's 24,000 Hz mono output into an expressive 48,000 Hz stereo
+    VTuber voice in <0.5ms using a dynamic time-varying pitch & intonation contour:
+      1. Shifts base pitch up (~+2.4 semitones, `base_pitch=1.15`) into a bright,
+         youthful anime/VTuber register (paired with Kokoro speed compensation so
+         speaking tempo stays natural!).
+      2. Applies a dynamic F0 pitch inflection curve across the phrase based on
+         punctuation ('?!', '?', '!') and emotion ('sassy_react', 'hug', 'blush',
+         'cheer') so her voice bounces and rises instead of sounding monotone!
     """
     s = np.asarray(samples_24k, dtype=np.float32).ravel()
-    if len(s) == 0:
+    n_in = len(s)
+    if n_in < 16:
         return np.zeros((0, 2), dtype=np.float32)
-    s48 = np.empty(len(s) * 2, dtype=np.float32)
-    s48[0::2] = s
-    s48[1:-1:2] = 0.5 * (s[:-1] + s[1:])
-    s48[-1] = s[-1]
+
+    # Trim leading/trailing dead silence so clauses connect snappily
+    nz = np.flatnonzero(np.abs(s) > 0.008)
+    if len(nz) > 0:
+        pad = min(960, n_in)  # ~40ms natural breath padding
+        start_i = max(0, int(nz[0]) - pad)
+        end_i = min(n_in, int(nz[-1]) + pad)
+        s = s[start_i:end_i]
+        n_in = len(s)
+
+    em = (emotion or "").lower()
+    text = clause.strip()
+    is_question = text.endswith("?") or "?!" in text
+    is_exclaim = "!" in text or em in ("sassy_react", "cheer", "clap", "wave", "dance", "point", "stick")
+    is_soft = em in ("hug", "blush", "headpat", "boop")
+
+    # Normalized phrase progress u in [0, 1] across input samples
+    u = np.linspace(0.0, 1.0, n_in, dtype=np.float32)
+
+    # Dynamic pitch contour multiplier around base_pitch
+    # (Higher instantaneous rate = higher pitch at that moment in the sentence)
+    contour = np.ones(n_in, dtype=np.float32) * float(base_pitch)
+
+    if is_question:
+        # Expressive incredulous / teasing question inflection: slight mid dip then +9% rising tail!
+        contour *= 1.0 - 0.03 * np.sin(np.pi * u) + 0.095 * np.clip((u - 0.62) / 0.38, 0.0, 1.0) ** 1.4
+    elif is_exclaim:
+        # Bouncy sassy/energetic arc: +7% punch on the opening reaction, lively mid wave, smug cadence
+        contour *= 1.0 + 0.07 * np.exp(-((u - 0.18) / 0.16) ** 2) + 0.035 * np.sin(2.5 * np.pi * u)
+    elif is_soft:
+        # Warm, sweet tsundere contour with gentle expressive wave
+        contour *= 0.97 + 0.04 * np.sin(1.5 * np.pi * u)
+    else:
+        # Natural conversational contour (never flat!)
+        contour *= 1.0 + 0.045 * np.sin(2.0 * np.pi * u) - 0.025 * u
+
+    # Convert instantaneous pitch ratio (relative to 48kHz output from 24kHz input) into sample phase
+    # At ratio = 1.0, 1 output sample at 48kHz advances 0.5 input samples at 24kHz.
+    step_per_out = 0.5 * contour
+    avg_step = float(np.mean(step_per_out))
+    n_out = max(1, int(n_in / avg_step))
+
+    u_out = np.linspace(0.0, 1.0, n_out, dtype=np.float32)
+    steps_out = np.interp(u_out, u, step_per_out)
+    in_indices = np.cumsum(steps_out)
+    in_indices = np.clip(in_indices, 0.0, float(n_in - 1))
+
+    s48 = np.interp(in_indices, np.arange(n_in, dtype=np.float32), s).astype(np.float32)
+
+    # Dynamic expressive volume emphasis on stressed openings for sassy/excited lines
+    if is_exclaim or is_question:
+        env = 1.0 + 0.16 * np.exp(-((u_out - 0.20) / 0.22) ** 2)
+        s48 = np.clip(s48 * env, -0.98, 0.98)
+
     return np.column_stack((s48, s48))
 
 
@@ -171,57 +232,63 @@ class VoiceHandler:
 
     def _get_kokoro_emotion_style(self, k, text: str, emotion: str | None = None):
         """
-        Dynamically blends Kokoro-82M 256-D voice style vectors (`af_bella`, `af_heart`,
-        `af_nicole`, `af_nova`) and adjusts pacing based on Luna's emotion / action so
-        her voice shifts between sassy-smug, warm/blushing, and upbeat!
+        Selects an un-flattened, high-dynamic-range Kokoro-82M voice vector (`af_heart`
+        or `af_bella`) plus base VTuber pitch shift and compensated synthesis speed so
+        her voice sounds bright, expressive, and full of attitude (never flat!).
         """
         em = (emotion or "").lower()
         low = text.lower()
 
-        bella = k.get_voice_style("af_bella")    # Expressive, sassy, bright
-        heart = k.get_voice_style("af_heart")    # Warm, cute, soft
-        nicole = k.get_voice_style("af_nicole")  # Smug, deadpan, husky
+        bella = k.get_voice_style("af_bella")  # Sharp, sassy, animated
+        heart = k.get_voice_style("af_heart")  # Cute, bouncy, warm anime-like inflection
 
-        if em in ("hug", "blush", "headpat", "boop") or any(w in low for w in ("hug", "cute", "fine,", "shoulder")):
-            # Softer, sweeter tsundere tone
-            style = 0.52 * heart + 0.28 * bella + 0.20 * nicole
-            speed = 0.96
+        # Note: Because _shape_vtuber_voice_48k_stereo shifts pitch up by `base_pitch` (~1.15x),
+        # we synthesize at `speed ~ 0.88 - 0.93` so `0.90 * 1.15 = 1.03x` natural speaking speed!
+        if em in ("hug", "blush", "headpat", "boop") or any(w in low for w in ("hug", "cute", "fine,", "shoulder", "aw")):
+            # Pure af_heart for maximum cute, warm tsundere inflection
+            style = heart
+            synth_speed = 0.86
+            base_pitch = 1.14
         elif em in ("wave", "clap", "cheer", "dance", "happy_hop") or "!" in text:
-            # Lively, expressive teasing energy
-            style = 0.65 * bella + 0.25 * heart + 0.10 * nicole
-            speed = 1.05
+            # Bright, bouncy, energetic blend (80% heart + 20% bella)
+            style = 0.80 * heart + 0.20 * bella
+            synth_speed = 0.92
+            base_pitch = 1.17
         elif em in ("sassy_react", "stare_smug", "point", "stick") or "?" in text:
-            # Confident, deadpan-smug roast delivery
-            style = 0.52 * bella + 0.33 * nicole + 0.15 * heart
-            speed = 0.99
+            # Sharp, sassy, bratty-smug inflection (65% bella + 35% heart)
+            style = 0.65 * bella + 0.35 * heart
+            synth_speed = 0.90
+            base_pitch = 1.15
         else:
-            style = 0.55 * bella + 0.25 * heart + 0.20 * nicole
-            speed = 1.01
+            style = 0.75 * heart + 0.25 * bella
+            synth_speed = 0.90
+            base_pitch = 1.15
 
-        return style, speed
+        return style, synth_speed, base_pitch
 
     async def _play_kokoro(self, text: str, emotion: str | None = None) -> bool:
         """
-        Sentence-pipelined Kokoro-82M synthesis: generates and plays the first sentence
-        in ~0.6s while synthesizing the remaining sentence in parallel!
+        Sentence-pipelined Kokoro-82M synthesis with VTuber pitch & dynamic intonation
+        contour shaping: plays the first sentence in ~0.6s while synthesizing the next!
         """
         try:
             k = await asyncio.to_thread(_get_kokoro)
-            style, speed = self._get_kokoro_emotion_style(k, text, emotion=emotion)
+            style, synth_speed, base_pitch = self._get_kokoro_emotion_style(k, text, emotion=emotion)
 
             clauses = [c.strip() for c in _SENTENCE_SPLIT_RE.split(text.strip()) if c.strip()]
             if not clauses:
                 return False
 
             def _synth(clause: str):
-                s24, _ = k.create(clause, voice=style, speed=speed, lang="en-us")
-                return _upsample_24k_to_48k_stereo(s24)
+                s24, _ = k.create(clause, voice=style, speed=synth_speed, lang="en-us")
+                return _shape_vtuber_voice_48k_stereo(
+                    s24, clause=clause, emotion=emotion, base_pitch=base_pitch
+                )
 
             # Synthesize first sentence (~0.6s)
             next_task = asyncio.create_task(asyncio.to_thread(_synth, clauses[0]))
             for i in range(len(clauses)):
                 audio_48k = await next_task
-                # Immediately kick off synthesis of sentence i+1 while sentence i plays!
                 if i + 1 < len(clauses):
                     next_task = asyncio.create_task(asyncio.to_thread(_synth, clauses[i + 1]))
                 if len(audio_48k) > 0:

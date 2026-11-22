@@ -594,11 +594,11 @@ class LunaInVRChat:
                 continue
 
             mode = self.world.snapshot()["mode"]
-            recently_talking = (time.time() - self.last_user_activity) < 15.0
 
-            if mode == "chill" or recently_talking:
-                await self._stare_at_speaker(allow_approach=True)
-                action = random.choices(["cutesy_idle", "stare_smug", "wave"], weights=[60, 32, 8], k=1)[0]
+            if mode == "chill":
+                # Stay right in place, turn to keep looking at you, and do stationary expressive idles
+                await self._stare_at_speaker(allow_approach=False)
+                action = random.choices(["cutesy_idle", "stare_smug"], weights=[65, 35], k=1)[0]
             else:
                 frame = await asyncio.to_thread(capture_luna_vrchat_frame)
                 if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
@@ -698,7 +698,7 @@ class LunaInVRChat:
                 self.osc.typing(True)
                 reply = await self.ai.async_generate_response(prompt, "VRChat", "System")
                 self.osc.typing(False)
-                await self._speak_and_move(reply, action="curious_approach", tag="luna (greet)")
+                await self._speak_and_move(reply, action="wave", tag="luna (greet)")
 
     # ── Main Entry Loop ────────────────────────────────────────────────────
 
@@ -749,7 +749,7 @@ class LunaInVRChat:
         self.osc.typing(True)
         greeting = await self.ai.async_generate_response(wake_prompt, "VRChat", "System")
         self.osc.typing(False)
-        await self._speak_and_move(greeting, action="wander_step", tag="luna (awake)")
+        await self._speak_and_move(greeting, action="wave", tag="luna (awake)")
 
         while True:
             user, text, heard = await self.queue.get()
