@@ -143,7 +143,7 @@ class VoiceHandler:
         self.mirror_device = (mirror_device or os.getenv('MIRROR_AUDIO_DEVICE', '')).strip()
         self.elevenlabs_key = os.getenv('ELEVENLABS_API_KEY', '').strip()
         self.voice_id = os.getenv('ELEVENLABS_VOICE_ID', '').strip()
-        self.tts_engine = os.getenv('TTS_ENGINE', 'edge').lower().strip()
+        self.tts_engine = os.getenv('TTS_ENGINE', 'kokoro').lower().strip()
         if self.tts_engine in ('none', 'off', 'disabled'):
             self.tts_enabled = False
         self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AnaNeural').strip()
@@ -237,20 +237,27 @@ class VoiceHandler:
 
     def _get_kokoro_emotion_style(self, k, text: str, emotion: str | None = None):
         """
-        Blends `af_heart` + `jf_alpha` (high anime girl vocal tract formants) and shifts
-        pitch by 1.32x (+4.8 semitones) so Kokoro sounds like a young chibi girl instead
-        of a deep adult woman!
+        Combines Kokoro-82M's two brightest voices (`75% af_heart + 25% af_bella`,
+        ~4750 Hz shifted spectral centroid) and shifts pitch up by 1.27x..1.34x
+        (+4.2 to +5.0 semitones) with speed compensation (0.81..0.85x) so Kokoro
+        sounds like a young, high-pitched anime VTuber (Neuro-sama age/tone)
+        instead of a deep adult woman!
         """
         em = (emotion or "").lower()
-        heart = k.get_voice_style("af_heart")
-        alpha = k.get_voice_style("jf_alpha")
-        style = 0.72 * heart + 0.28 * alpha
+        low = text.lower()
+        heart = k.get_voice_style("af_heart")  # Brightest, cutest voice in Kokoro (3799 Hz)
+        bella = k.get_voice_style("af_bella")  # Sharpest sassy inflection (3606 Hz)
 
-        if em in ("hug", "blush", "headpat", "boop"):
-            return style, 0.78, 1.30
+        if em in ("hug", "blush", "headpat", "boop") or any(w in low for w in ("hug", "cute", "fine,", "shoulder", "aw")):
+            # Pure af_heart at 1.27x pitch (+4.1 semitones) for soft, young tsundere warmth
+            return heart, 0.80, 1.27
         if em in ("wave", "clap", "cheer", "dance", "happy_hop") or "!" in text:
-            return style, 0.84, 1.35
-        return style, 0.81, 1.32
+            # High-energy young anime bounce at 1.33x pitch (+5.0 semitones)
+            return 0.78 * heart + 0.22 * bella, 0.85, 1.33
+        if em in ("sassy_react", "stare_smug", "point", "stick") or "?" in text:
+            # Bratty, sassy Neuro-style roast delivery at 1.30x pitch (+4.6 semitones)
+            return 0.68 * heart + 0.32 * bella, 0.83, 1.30
+        return 0.75 * heart + 0.25 * bella, 0.83, 1.30
 
     async def _play_kokoro(self, text: str, emotion: str | None = None) -> bool:
         try:
