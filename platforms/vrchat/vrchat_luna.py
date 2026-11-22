@@ -121,10 +121,10 @@ def ensure_luna_vrchat_window():
         print("[launcher] Luna's VRChat window (Profile 1) is already open!")
 
 AUTONOMOUS_THOUGHT_PROMPTS = [
-    "Look at what your eyes currently see in front of you in VRChat and make a natural, witty comment about it.",
-    "Start a casual conversation with Kai or the people nearby in the VRChat room based on where you are and what you see.",
-    "You just glanced around the VRChat room. Comment on an avatar, detail, or the vibe you see in front of you.",
-    "Share a spontaneous thought or ask Kai / nearby players a fun question while hanging out in VRChat.",
+    "Look at what your eyes currently see in front of you in VRChat and make a sassy, smug comment about it.",
+    "Start a teasing conversation with Kai or the people nearby in the VRChat room based on where you are and what you see.",
+    "You just glanced around the VRChat room. Smugly judge an avatar, mirror, or detail you see in front of you.",
+    "Share a spontaneous sassy thought or ask Kai / nearby players a sharp question while hanging out in VRChat.",
 ]
 
 
@@ -300,7 +300,7 @@ class LunaInVRChat:
     async def _speak_and_move(self, reply: str, action: str | None = None, tag: str = "luna"):
         if not reply:
             return
-        chosen_action = action or VRChatOSC.pick_reaction_for_reply(reply)
+        chosen_action = action or self.ai.last_action or VRChatOSC.pick_reaction_for_reply(reply)
         self.world.record_action(chosen_action)
         print(f"{tag} [{chosen_action}] > {reply}")
 
@@ -507,6 +507,7 @@ class LunaInVRChat:
         print("        LUNA AI VTUBER - AUTONOMOUS VRCHAT COMPANION")
         print("=" * 64)
         print(f"  Brain     : {self.ai.provider} / {self.ai.model}")
+        print(f"  Dataset   : {len(self.ai.retriever.rows)} rows (HuggingFace Neuro-sama-QnA + neuro.alpha + Sassy/Smug)")
         eyes_desc = "OFF"
         if self.vision:
             cloud_v = f"Gemini {self.vision.gemini_model}" if self.vision.gemini_key else self.vision.model
