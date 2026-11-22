@@ -79,7 +79,7 @@ class VoiceHandler:
         self.mirror_device = (mirror_device or os.getenv('MIRROR_AUDIO_DEVICE', '')).strip()
         self.elevenlabs_key = os.getenv('ELEVENLABS_API_KEY', '').strip()
         self.voice_id = os.getenv('ELEVENLABS_VOICE_ID', '').strip()
-        self.tts_engine = os.getenv('TTS_ENGINE', 'gura').lower().strip()
+        self.tts_engine = os.getenv('TTS_ENGINE', 'baelz').lower().strip()
         if self.tts_engine in ('none', 'off', 'disabled'):
             self.tts_enabled = False
         self.edge_voice = os.getenv('EDGE_VOICE', 'en-US-AnaNeural').strip()
@@ -90,13 +90,14 @@ class VoiceHandler:
         self.mirror_device_id = None
         self.is_speaking = False
 
-        if self.tts_enabled and self.tts_engine in ('gura', 'rvc'):
+        if self.tts_enabled and self.tts_engine in ('baelz', 'bae', 'gura', 'rvc'):
             try:
-                from luna.rvc_infer.converter import get_gura_converter
-                get_gura_converter()
-                print("[Voice] Loaded Gawr Gura RVC v2 voice model (GuraTalkV2.pth)")
+                from luna.rvc_infer.converter import get_rvc_converter, RVC_VOICE_MODELS
+                get_rvc_converter(self.tts_engine)
+                label = RVC_VOICE_MODELS.get(self.tts_engine, RVC_VOICE_MODELS["baelz"])[2]
+                print(f"[Voice] Loaded {label}")
             except Exception as e:
-                print(f"[Gura RVC Init Warning] {e}")
+                print(f"[RVC Init Warning] {e}")
         elif self.tts_enabled and self.tts_engine == 'kokoro' and os.path.exists(KOKORO_MODEL):
             try:
                 _get_kokoro()
@@ -154,13 +155,13 @@ class VoiceHandler:
         """Pre-synthesizes full continuous audio buffer before opening VRChat PTT (/input/Voice=1)."""
         if not self.tts_enabled or not text:
             return None
-        if self.tts_engine in ('gura', 'rvc'):
+        if self.tts_engine in ('baelz', 'bae', 'gura', 'rvc'):
             try:
-                gura_48k = await self._synthesize_gura_rvc(text, emotion=emotion)
-                if gura_48k is not None and len(gura_48k) > 0:
-                    return (gura_48k, 48000)
+                rvc_48k = await self._synthesize_rvc(text, emotion=emotion)
+                if rvc_48k is not None and len(rvc_48k) > 0:
+                    return (rvc_48k, 48000)
             except Exception as e:
-                print(f"Gura RVC v2 prepare error: {e}")
+                print(f"RVC v2 prepare error: {e}")
         return None
 
     async def play_prepared_audio(self, samples: np.ndarray, samplerate: int):
@@ -181,10 +182,10 @@ class VoiceHandler:
             return
         try:
             self.is_speaking = True
-            if self.tts_engine in ('gura', 'rvc'):
-                success = await self._play_gura_rvc(text, emotion=emotion)
+            if self.tts_engine in ('baelz', 'bae', 'gura', 'rvc'):
+                success = await self._play_rvc(text, emotion=emotion)
                 if not success:
-                    print("Gura RVC v2 failed, falling back to edge-tts...")
+                    print("RVC v2 failed, falling back to edge-tts...")
                     await self._play_edge_tts(text, emotion=emotion)
             elif self.tts_engine == 'kokoro':
                 success = await self._play_kokoro(text, emotion=emotion)
@@ -209,24 +210,24 @@ class VoiceHandler:
             await asyncio.sleep(0.25)
             self.is_speaking = False
 
-    async def _synthesize_gura_rvc(self, text: str, emotion: str | None = None) -> np.ndarray | None:
+    async def _synthesize_rvc(self, text: str, emotion: str | None = None) -> np.ndarray | None:
         """
         Synthesizes the full reply with `en-US-AnaNeural` and converts it as ONE continuous
-        buffer through Gawr Gura RVC v2 (`GuraTalkV2.pth`) so there is never a multi-second
-        mid-sentence gap on CPU.
+        buffer through the configured RVC v2 model (Hakos Baelz / Gawr Gura) so there is
+        never a multi-second mid-sentence gap on CPU.
         """
         full_text = text.strip()
         if not full_text:
             return None
 
         import edge_tts
-        from luna.rvc_infer.converter import get_gura_converter
+        from luna.rvc_infer.converter import get_rvc_converter
 
-        conv = await asyncio.to_thread(get_gura_converter)
+        conv = await asyncio.to_thread(get_rvc_converter, self.tts_engine)
         pitch, rate = self._get_neuro_edge_prosody(full_text, emotion=emotion)
         stamp = int(time.time() * 1000)
-        mp3_p = os.path.join(BASE_DIR, f"temp_gura_{os.getpid()}_{stamp}.mp3")
-        wav_p = os.path.join(BASE_DIR, f"temp_gura_{os.getpid()}_{stamp}.wav")
+        mp3_p = os.path.join(BASE_DIR, f"temp_rvc_{os.getpid()}_{stamp}.mp3")
+        wav_p = os.path.join(BASE_DIR, f"temp_rvc_{os.getpid()}_{stamp}.wav")
         try:
             comm = edge_tts.Communicate(full_text, self.edge_voice, pitch=pitch, rate=rate)
             await comm.save(mp3_p)
@@ -243,15 +244,15 @@ class VoiceHandler:
                     except OSError:
                         pass
 
-    async def _play_gura_rvc(self, text: str, emotion: str | None = None) -> bool:
+    async def _play_rvc(self, text: str, emotion: str | None = None) -> bool:
         try:
-            gura_48k = await self._synthesize_gura_rvc(text, emotion=emotion)
-            if gura_48k is None or len(gura_48k) == 0:
+            rvc_48k = await self._synthesize_rvc(text, emotion=emotion)
+            if rvc_48k is None or len(rvc_48k) == 0:
                 return False
-            await asyncio.to_thread(self._play_samples, gura_48k, 48000)
+            await asyncio.to_thread(self._play_samples, rvc_48k, 48000)
             return True
         except Exception as e:
-            print(f"Gura RVC v2 error: {e}")
+            print(f"RVC v2 error: {e}")
             return False
 
     async def _play_kokoro(self, text: str, emotion: str | None = None) -> bool:

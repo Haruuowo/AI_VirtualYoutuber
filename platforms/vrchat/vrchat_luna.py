@@ -573,10 +573,25 @@ class LunaInVRChat:
 
     # ── Core Speech + Body Coordinator ─────────────────────────────────────
 
-    async def _speak_and_move(self, reply: str, action: str | None = None, tag: str = "luna"):
+    _ROAM_ONLY_ACTIONS = {
+        "wander_step", "look_around", "curious_approach", "step_back",
+        "turn_left", "turn_right", "walk_forward", "walk_back",
+        "strafe_left", "strafe_right", "spin",
+    }
+
+    async def _speak_and_move(
+        self,
+        reply: str,
+        action: str | None = None,
+        tag: str = "luna",
+        allow_roam_action: bool = False,
+    ):
         if not reply:
             return
         chosen_action = action or self.ai.last_action or VRChatOSC.pick_reaction_for_reply(reply)
+        if not allow_roam_action and self.world.snapshot()["mode"] == "chill":
+            if chosen_action in self._ROAM_ONLY_ACTIONS:
+                chosen_action = "stare_smug"
         self.world.record_action(chosen_action)
         print(f"{tag} [{chosen_action}] > {reply}")
 
@@ -630,10 +645,12 @@ class LunaInVRChat:
             self.osc.apply_cutesy_smug_face(blush=0.4, happy=True)
             return False
 
-        if abs(offset) > 0.20:
+        if abs(offset) > 0.14:
             await self.osc.lock_gaze_on_offset(offset)
         else:
+            self.osc.vr_tracker.set_gaze_offset(offset)
             self.osc.apply_cutesy_smug_face(blush=0.45, happy=True)
+            self.osc.set_eyes(pitch=-2.0, yaw=float(offset * 16.0), closed=0.16)
 
         if allow_approach and height_ratio < 0.52 and abs(offset) <= 0.30:
             await self.osc.move(vertical=0.85, duration=1.4)
@@ -673,9 +690,31 @@ class LunaInVRChat:
         await stare_task
         self.osc.typing(False)
 
-        await self._speak_and_move(reply, action=requested_action or vision_steer, tag="luna")
+        await self._speak_and_move(
+            reply,
+            action=requested_action or vision_steer,
+            tag="luna",
+            allow_roam_action=bool(requested_action),
+        )
 
-    # ── Autonomous Body Loop (Cutesy-Smug Idle & Active Walking) ──────────
+    # ── Continuous Gaze-Lock + Autonomous Body Loop ────────────────────────
+
+    async def gaze_track_loop(self):
+        """
+        Lightweight ~1.2s local YOLOv8-nano gaze tracker (0 API tokens):
+        keeps Luna's 3D VR head, eyes, and body continuously turned toward you
+        in chill mode instead of staring off into space or wandering!
+        """
+        while True:
+            await asyncio.sleep(1.2)
+            if self.speaking or self.world.snapshot()["mode"] != "chill":
+                continue
+            if self.osc._move_lock.locked():
+                continue
+            try:
+                await self._stare_at_speaker(allow_approach=False)
+            except Exception:
+                pass
 
     async def body_loop(self):
         """
@@ -839,6 +878,7 @@ class LunaInVRChat:
         if self.args.listen:
             self.start_all_ears()
         asyncio.create_task(self.console_loop())
+        asyncio.create_task(self.gaze_track_loop())
         if self.autonomy_enabled:
             asyncio.create_task(self.body_loop())
             asyncio.create_task(self.mind_loop())

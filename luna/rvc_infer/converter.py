@@ -20,15 +20,34 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RVC_DIR = os.path.join(BASE_DIR, "models", "rvc")
 CONTENTVEC_ONNX = os.path.join(RVC_DIR, "vec-768-layer-12.onnx")
 GURA_PTH = os.path.join(RVC_DIR, "gura", "GuraTalkV2.pth")
+BAELZ_PTH = os.path.join(RVC_DIR, "baelz", "baetalk_e215_s6235.pth")
 
-_CONVERTER_SINGLETON = None
+RVC_VOICE_MODELS = {
+    "baelz": (
+        BAELZ_PTH,
+        "https://huggingface.co/dacoolkid44/VTuber-RVC/resolve/main/Hakos%20Baelz/baetalk_e215_s6235.pth",
+        "Hakos Baelz RVC v2 (baetalk_e215_s6235.pth)",
+    ),
+    "bae": (
+        BAELZ_PTH,
+        "https://huggingface.co/dacoolkid44/VTuber-RVC/resolve/main/Hakos%20Baelz/baetalk_e215_s6235.pth",
+        "Hakos Baelz RVC v2 (baetalk_e215_s6235.pth)",
+    ),
+    "gura": (
+        GURA_PTH,
+        "https://huggingface.co/dacoolkid44/VTuber-RVC/resolve/main/Gawr%20Gura%20%28Talking%29/GuraTalkV2.pth",
+        "Gawr Gura RVC v2 (GuraTalkV2.pth)",
+    ),
+}
+
+_CONVERTER_CACHE: dict[str, "RVCv2Converter"] = {}
 
 
-def _ensure_rvc_models(model_path: str):
+def _ensure_rvc_models(model_path: str, download_url: str):
     os.makedirs(os.path.dirname(CONTENTVEC_ONNX), exist_ok=True)
     if not os.path.exists(CONTENTVEC_ONNX):
         import urllib.request
-        print("[Gura RVC] Downloading ContentVec (vec-768-layer-12.onnx)...")
+        print("[RVC] Downloading ContentVec (vec-768-layer-12.onnx)...")
         urllib.request.urlretrieve(
             "https://huggingface.co/ozada/onnx_rvc/resolve/main/vec-768-layer-12.onnx",
             CONTENTVEC_ONNX,
@@ -36,20 +55,24 @@ def _ensure_rvc_models(model_path: str):
     if not os.path.exists(model_path):
         import urllib.request
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        print("[Gura RVC] Downloading Gawr Gura RVC v2 (GuraTalkV2.pth)...")
-        urllib.request.urlretrieve(
-            "https://huggingface.co/dacoolkid44/VTuber-RVC/resolve/main/Gawr%20Gura%20%28Talking%29/GuraTalkV2.pth",
-            model_path,
-        )
+        print(f"[RVC] Downloading {os.path.basename(model_path)}...")
+        urllib.request.urlretrieve(download_url, model_path)
+
+
+def get_rvc_converter(voice_name: str | None = None) -> "RVCv2Converter":
+    key = (voice_name or os.getenv("TTS_ENGINE", "baelz")).lower().strip()
+    if key not in RVC_VOICE_MODELS:
+        key = "baelz"
+    default_path, dl_url, _ = RVC_VOICE_MODELS[key]
+    m_path = os.getenv("RVC_MODEL_PATH", "").strip() or default_path
+    if m_path not in _CONVERTER_CACHE:
+        _ensure_rvc_models(m_path, dl_url)
+        _CONVERTER_CACHE[m_path] = RVCv2Converter(model_path=m_path)
+    return _CONVERTER_CACHE[m_path]
 
 
 def get_gura_converter():
-    global _CONVERTER_SINGLETON
-    if _CONVERTER_SINGLETON is None:
-        m_path = os.getenv("RVC_MODEL_PATH", GURA_PTH)
-        _ensure_rvc_models(m_path)
-        _CONVERTER_SINGLETON = RVCv2Converter(model_path=m_path)
-    return _CONVERTER_SINGLETON
+    return get_rvc_converter("gura")
 
 
 class RVCv2Converter:
