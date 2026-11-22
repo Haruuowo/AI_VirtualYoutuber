@@ -78,13 +78,12 @@ class VirtualVRPoseController:
         self.action_until = self.action_started + max(0.5, duration)
 
     def _compute_poses(self, t: float) -> list[float]:
-        # Base standing head height = 1.35m
+        # Base standing head height = 1.65m (matches VRChat default standing height so knees never squat/break!)
         breath = math.sin(t * 1.9) * 0.012
         sway_x = math.sin(t * 0.85) * 0.015
 
         # Default cutesy-smug idle pose:
-        # Head slightly tilted sideways (~7 deg), hands resting near hips/waist in a sassy posture
-        h_x, h_y, h_z = sway_x, 1.35 + breath, 0.0
+        h_x, h_y, h_z = sway_x, 1.65 + breath, 0.0
         h_pitch = math.sin(t * 1.1) * 2.5
         h_yaw = self.gaze_yaw_deg + math.sin(t * 0.5) * 3.0
         h_roll = 7.5 * math.sin(t * 0.65)  # Cutesy-smug head tilt!

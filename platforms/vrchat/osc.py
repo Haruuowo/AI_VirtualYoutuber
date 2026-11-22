@@ -86,6 +86,8 @@ class VRChatOSC:
 
     def stop_all(self):
         """Immediately zeroes all movement axes and buttons so the avatar never gets stuck walking."""
+        self.set_param("VRCEmote", 0)
+        self.set_param("DoingEmote", False)
         for addr in ("/input/Vertical", "/input/Horizontal", "/input/LookHorizontal"):
             self.client.send_message(addr, 0.0)
         for addr in (
@@ -131,6 +133,9 @@ class VRChatOSC:
 
     async def move(self, vertical: float = 0.0, horizontal: float = 0.0, duration: float = 1.0, run: bool = False):
         """Walks/strafes cleanly using both smooth analog axes and Desktop MoveForward/MoveBackward buttons."""
+        # Clear any active full-body emote before moving so her legs are never locked in place
+        self.set_param("VRCEmote", 0)
+        self.set_param("DoingEmote", False)
         axes: list[tuple[str, float]] = []
         buttons: list[str] = []
         if vertical:
@@ -193,11 +198,10 @@ class VRChatOSC:
         self.set_param("Happy", bool(happy))
         self.set_param("Sleepy", bool(sleepy_smug))
         self.set_param("BlinkEnabled", True)
-        # Colibri Blind expression selectors & modifiers
+        # Colibri Blind expression selectors & modifiers (do NOT force EmotionIDX or DoingEmote externally)
         self.set_param("ExpModL", bool(exp_mod_l))
         self.set_param("ExpModR", bool(exp_mod_r))
         self.set_param("Emotion", int(emotion_idx))
-        self.set_param("EmotionIDX", int(emotion_idx))
         # Standard BlendTree facial expression fallback
         self.set_param("VRCFaceBlendH", 0.55 if happy else -0.4)
         self.set_param("VRCFaceBlendV", 0.35 if sleepy_smug else 0.0)
@@ -229,16 +233,14 @@ class VRChatOSC:
     async def emote(self, emote_id: int, duration: float = 2.8, happy: bool = True, blush: float = 0.45, emotion_idx: int = 1):
         """
         Triggers a standard VRChat SDK3 hand/body emote (/avatar/parameters/VRCEmote 1..8)
-        plus Colibri Blind's DoingEmote flag while maintaining her facial expression.
+        while maintaining her facial expression.
         """
         try:
             self.apply_cutesy_smug_face(blush=blush, happy=happy, emotion_idx=emotion_idx)
-            self.set_param("DoingEmote", True)
             self.set_param("VRCEmote", int(emote_id))
             await asyncio.sleep(max(0.5, duration))
         finally:
             self.set_param("VRCEmote", 0)
-            self.set_param("DoingEmote", False)
             self.apply_cutesy_smug_face(blush=0.40, happy=True, sleepy_smug=True, emotion_idx=1)
 
     # ── High-Level Expressive Actions & Autonomous Body Language ───────────
@@ -291,11 +293,11 @@ class VRChatOSC:
             self.set_param("Headpat", False)
 
         elif action == "hug":
-            # Opens arms wide while stepping in close, then wraps both 3D VR arms around you with a warm blush
+            # Walks in close to you, blushes warmly, and raises her arms/face for a hug
             self.apply_cutesy_smug_face(blush=0.95, happy=True, sleepy_smug=True, emotion_idx=2, exp_mod_l=True, exp_mod_r=True)
+            await self.move(vertical=0.75, duration=0.90)
             self.set_param("Headpat", True)
-            await self.move(vertical=0.65, duration=0.80)
-            await asyncio.sleep(2.8)
+            await self.emote(4, duration=2.4, happy=True, blush=0.95, emotion_idx=2)
             self.set_param("Headpat", False)
             self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=True, emotion_idx=1)
 

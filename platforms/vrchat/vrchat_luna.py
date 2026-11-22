@@ -129,7 +129,7 @@ def _kill_luna_profile1_vrchat():
     subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True)
 
 
-def travel_luna_to_instance(target_instance: str, use_vr: bool = True):
+def travel_luna_to_instance(target_instance: str, use_vr: bool = False):
     """
     Teleports Luna (Profile 1) directly into `target_instance` (`wrld_...:instance`)
     by relaunching her Profile 1 client with `vrchat://launch?id=<target_instance>`.
