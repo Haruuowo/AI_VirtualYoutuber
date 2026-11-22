@@ -56,12 +56,13 @@ class AIHandler:
         if self.provider == 'ollama':
             self.model = model or os.getenv('OLLAMA_MODEL', 'dolphin-llama3:8b')
         else:
-            self.model = model or os.getenv('GROQ_MODEL', 'openai/gpt-oss-120b')
+            self.model = model or os.getenv('GROQ_MODEL', 'qwen/qwen3.8-27b')
             from groq import Groq
-            self.client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+            # max_retries=0 ensures instant (<0.1s) failover across Groq model pools on 429
+            self.client = Groq(api_key=os.getenv('GROQ_API_KEY'), max_retries=0)
 
-        # Clean rolling in-memory context buffer (last 16 messages)
-        self.memory = deque(maxlen=16)
+        # Compact rolling in-memory context buffer (last 8 messages = 4 turns, saves 60% daily tokens)
+        self.memory = deque(maxlen=8)
 
         # Zero-VRAM Hugging Face Neuro-sama + Sassy/Smug dataset retriever & long-term memory
         self.retriever = SassyDatasetRetriever()
@@ -128,43 +129,53 @@ class AIHandler:
                     return resp.choices[0].message.content
                 raise
         else:
-            try:
-                model_low = (self.model or "").lower()
-                kwargs = dict(
-                    model=self.model,
-                    max_tokens=max(max_tokens, 200),
+            def _make_groq_kwargs(target_model: str):
+                m_low = (target_model or "").lower()
+                if "qwen" in m_low:
+                    return dict(
+                        model=target_model,
+                        max_tokens=max(max_tokens, 75),
+                        temperature=temperature,
+                        reasoning_effort="none",
+                        messages=messages,
+                    )
+                if "gpt-oss" in m_low:
+                    return dict(
+                        model=target_model,
+                        max_tokens=max(max_tokens, 160),
+                        temperature=temperature,
+                        reasoning_effort="low",
+                        messages=messages,
+                    )
+                return dict(
+                    model=target_model,
+                    max_tokens=max(max_tokens, 80),
                     temperature=temperature,
                     messages=messages,
                 )
-                if "qwen" in model_low:
-                    kwargs["reasoning_effort"] = "none"
-                elif "gpt-oss" in model_low:
-                    kwargs["reasoning_effort"] = "low"
-                response = self.client.chat.completions.create(**kwargs)
+
+            try:
+                response = self.client.chat.completions.create(**_make_groq_kwargs(self.model))
                 return response.choices[0].message.content
             except Exception as e:
                 err_str = str(e)
                 if '429' in err_str or 'rate_limit' in err_str:
-                    # Fail over between Groq's separate model pools (gpt-oss-120b <-> gpt-oss-20b)
-                    for fallback_model in ("openai/gpt-oss-120b", "openai/gpt-oss-20b"):
+                    # Instantly fail over across all 3 separate Groq daily token pools and stick to the working model!
+                    for fallback_model in ("qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"):
                         if fallback_model == self.model:
                             continue
                         try:
-                            resp = self.client.chat.completions.create(
-                                model=fallback_model,
-                                max_tokens=max(max_tokens, 200),
-                                temperature=temperature,
-                                reasoning_effort="low",
-                                messages=messages,
-                            )
+                            resp = self.client.chat.completions.create(**_make_groq_kwargs(fallback_model))
+                            print(f"[AI Failover] {self.model} rate-limited -> switched active brain to {fallback_model}")
+                            self.model = fallback_model
                             return resp.choices[0].message.content
                         except Exception:
                             pass
-                    print(f"[AI Fallback] Groq rate limit hit. Seamlessly falling back to local Ollama...")
+                    print(f"[AI Fallback] All Groq pools rate-limited. Seamlessly falling back to local Ollama...")
                     try:
                         import ollama
                         resp = ollama.chat(
-                            model=os.getenv('OLLAMA_MODEL', 'llama3.2:3b'),
+                            model=os.getenv('OLLAMA_MODEL', 'dolphin-llama3:8b'),
                             messages=messages,
                             options={"temperature": temperature, "num_predict": max_tokens}
                         )

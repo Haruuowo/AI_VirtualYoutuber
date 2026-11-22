@@ -106,10 +106,10 @@ class SassyDatasetRetriever:
 
     def format_prompt_block(self, query: str) -> str:
         """Builds a compact few-shot style block injected into the system prompt."""
-        examples = self.retrieve_examples(query, top_k=4, random_anchors=2)
+        examples = self.retrieve_examples(query, top_k=2, random_anchors=1)
         if not examples:
             return ""
-        lines = ["[SASSY & SMUG STYLE EXAMPLES (match this sharp, deadpan, teasing energy; do not copy verbatim unless it fits):]"]
+        lines = ["[SASSY & SMUG STYLE EXAMPLES (match this sharp, deadpan, teasing energy):]"]
         for ex in examples:
             act = ex.get("action", "stare_smug")
             lines.append(f"- User: \"{ex['instruction']}\" -> Luna: \"[action:{act}] {ex['output']}\"")
