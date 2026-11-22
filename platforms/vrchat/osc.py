@@ -24,6 +24,7 @@ import textwrap
 import time
 
 from pythonosc.udp_client import SimpleUDPClient
+from platforms.vrchat.vr_tracker import VirtualVRPoseController
 
 CHATBOX_LIMIT = 144          # VRChat hard limit per chatbox message
 PAGE_DELAY = 2.2             # VRChat rate-limits the chatbox; ~2s between pages is safe
@@ -47,6 +48,9 @@ class VRChatOSC:
         self.port = int(port or os.getenv("VRCHAT_OSC_PORT", "9000"))
         self.client = SimpleUDPClient(self.host, self.port)
         self._move_lock = asyncio.Lock()
+        # 60 Hz 6-DOF Virtual VR Head + Left/Right Hands streamer (UDP 127.0.0.1:27015 -> driver_luna.dll)
+        self.vr_tracker = VirtualVRPoseController()
+        self.vr_tracker.start()
 
     # ── Chatbox ────────────────────────────────────────────────────────────
 
@@ -212,12 +216,14 @@ class VRChatOSC:
         Turns Luna's head/body toward `offset` (-1.0 left .. +1.0 right) so she centers
         the speaker in her view and locks her eyes straight on them.
         """
+        self.vr_tracker.set_gaze_offset(offset)
         self.apply_cutesy_smug_face(blush=0.45, happy=True, sleepy_smug=True, emotion_idx=1)
         self.set_eyes(pitch=-2.0, yaw=float(offset * 12.0), closed=0.16)
         if abs(offset) > 0.20:
             speed = 0.45 if offset > 0 else -0.45
             dur = min(0.45, max(0.10, abs(offset) * 0.38))
             await self.turn(speed=speed, duration=dur)
+        self.vr_tracker.set_gaze_offset(0.0)
         self.set_eyes(pitch=-2.0, yaw=0.0, closed=0.16)
 
     async def emote(self, emote_id: int, duration: float = 2.8, happy: bool = True, blush: float = 0.45, emotion_idx: int = 1):
@@ -238,7 +244,11 @@ class VRChatOSC:
     # ── High-Level Expressive Actions & Autonomous Body Language ───────────
 
     async def perform(self, action: str):
-        """Executes a named physical behavior, locomotion step, or hand emote."""
+        """Executes a named physical behavior, locomotion step, 6-DOF VR arm/head pose, or hand emote."""
+        # Trigger matching 6-DOF VR Head & Hand pose in driver_luna.dll (if running in VR mode)
+        pose_dur = 5.5 if action == "dance" else 2.6
+        self.vr_tracker.trigger_pose(action, duration=pose_dur)
+
         if action == "stop":
             self.stop_all()
             self.set_param("VRCEmote", 0)

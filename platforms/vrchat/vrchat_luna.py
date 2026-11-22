@@ -97,25 +97,45 @@ def _newest_log_is_profile1() -> bool:
         return False
 
 
-def ensure_luna_vrchat_window():
+def _ensure_steamvr_running():
+    """Starts SteamVR (vrstartup.exe) with driver_luna Virtual HMD + Hands if not already running."""
+    if sys.platform != "win32":
+        return
+    res = subprocess.run(["tasklist", "/FI", "IMAGENAME eq vrserver.exe", "/NH"], capture_output=True, text=True)
+    if "vrserver.exe" in res.stdout.lower():
+        print("[steamvr] SteamVR (vrserver.exe) is already running with driver_luna!")
+        return
+    vrstartup = Path(r"C:\Program Files (x86)\Steam\steamapps\common\SteamVR\bin\win64\vrstartup.exe")
+    if vrstartup.exists():
+        print("[steamvr] Starting SteamVR with Luna's Virtual 6-DOF HMD + Hand Controllers...")
+        subprocess.Popen([str(vrstartup)], cwd=str(vrstartup.parent))
+        time.sleep(4.5)
+
+
+def ensure_luna_vrchat_window(use_vr: bool = False):
     """
     Launches ONLY Luna's VRChat window (Profile 1, OSC port 9002) if it isn't
     already open. Your main VRChat account (Profile 0) is opened separately
-    by you via Steam so the two Easy Anti-Cheat splash screens never collide.
+    by you with --no-vr so you stay on Desktop Mouse & Keyboard while Luna uses VR!
     """
+    if use_vr:
+        _ensure_steamvr_running()
     vrc_dir = _find_vrc_dir()
     if not vrc_dir:
         return
     launch_exe = str(vrc_dir / "launch.exe")
-    luna_args = [
-        launch_exe, "--profile=1", "--no-vr",
+    luna_args = [launch_exe, "--profile=1"]
+    if not use_vr:
+        luna_args.append("--no-vr")
+    luna_args.extend([
         "-screen-width", "854", "-screen-height", "480", "-screen-fullscreen", "0",
         "--fps=30", "--osc=9002:127.0.0.1:9003",
-    ]
+    ])
 
     count = _count_vrchat_processes()
     if count == 0 or (count == 1 and not _newest_log_is_profile1()):
-        print("[launcher] Opening LUNA's VRChat window (Profile 1, 854x480, OSC 9002)...")
+        mode_lbl = "6-DOF STEAMVR MODE" if use_vr else "Desktop Mode"
+        print(f"[launcher] Opening LUNA's VRChat window (Profile 1, {mode_lbl}, 854x480, OSC 9002)...")
         subprocess.Popen(luna_args, cwd=str(vrc_dir))
     else:
         print("[launcher] Luna's VRChat window (Profile 1) is already open!")
@@ -141,6 +161,7 @@ def parse_args():
     p.add_argument("--chill", action="store_true", help="Start in stay-put mode (subtle idle movement, no roaming)")
     p.add_argument("--think-every", type=int, default=38, help="Average seconds between autonomous thoughts (default: 38)")
     p.add_argument("--no-launch", action="store_true", help="Do not auto-launch missing VRChat windows on startup")
+    p.add_argument("--vr", action="store_true", help="Launch Luna in SteamVR 6-DOF Virtual Headset + Hands mode (driver_luna)")
     p.add_argument("--list-devices", action="store_true", help="Print audio device names and exit")
     return p.parse_args()
 
@@ -305,6 +326,7 @@ class LunaInVRChat:
         print(f"{tag} [{chosen_action}] > {reply}")
 
         self.speaking = True
+        self.osc.vr_tracker.set_speaking(True)
         self.last_activity = time.time()
         use_ptt = not getattr(self.args, "no_ptt", False) and os.getenv("VRCHAT_PTT", "true").lower() not in ("false", "0", "no")
         try:
@@ -318,6 +340,7 @@ class LunaInVRChat:
                 await asyncio.to_thread(asyncio.run, self.voice.generate_and_play_audio(reply))
             await asyncio.gather(chat_task, move_task, return_exceptions=True)
         finally:
+            self.osc.vr_tracker.set_speaking(False)
             if use_ptt:
                 await asyncio.sleep(0.2)
                 self.osc.client.send_message("/input/Voice", 0)
@@ -515,6 +538,7 @@ class LunaInVRChat:
         print(f"  Eyes      : {eyes_desc}")
         print(f"  VRChat    : world='{snap['world']}' | players={snap['players'] or ['(solo)']}")
         print(f"  OSC       : {self.osc.host}:{self.osc.port}  (chatbox + /input/* locomotion)")
+        print(f"  6-DOF VR  : Streaming 60Hz Head + Left/Right Hands -> UDP 127.0.0.1:27015 (driver_luna)")
         print(f"  Autonomy  : {'ON (' + snap['mode'].upper() + ' mode)' if self.autonomy_enabled else 'OFF (manual)'}")
         print(f"  Voice Out : {'OFF (chatbox only)' if not self.voice else ' + '.join(x for x in (self.voice.audio_device, self.voice.mirror_device) if x)}")
         print(f"  Ears      : {'ON (Mic + World Audio)' if self.args.listen else 'OFF (use --listen)'}")
@@ -561,8 +585,9 @@ def main():
         list_devices()
         return
     _kill_other_luna_brains()
+    use_vr = getattr(args, "vr", False) or os.getenv("VRCHAT_VR_MODE", "false").lower() in ("true", "1", "yes")
     if not getattr(args, "no_launch", False):
-        ensure_luna_vrchat_window()
+        ensure_luna_vrchat_window(use_vr=use_vr)
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
