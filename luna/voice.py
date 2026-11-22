@@ -214,38 +214,66 @@ class VoiceHandler:
 
     async def _synthesize_rvc(self, text: str, emotion: str | None = None) -> np.ndarray | None:
         """
-        Synthesizes the full reply with `en-US-AnaNeural` and converts it as ONE continuous
-        buffer through the configured RVC v2 model (Hakos Baelz / Gawr Gura) so there is
-        never a multi-second mid-sentence gap on CPU.
+        Synthesizes the full reply with expressive Kokoro-82M (`af_heart`) locally (~0.15s,
+        rich natural intonation, falls back to Edge TTS if needed) and converts it as ONE
+        continuous buffer through the configured RVC v2 model with dynamic pitch inflection.
         """
         full_text = text.strip()
         if not full_text:
             return None
 
-        import edge_tts
         from luna.rvc_infer.converter import get_rvc_converter
 
         conv = await asyncio.to_thread(get_rvc_converter, self.tts_engine)
-        pitch, rate = self._get_neuro_edge_prosody(full_text, emotion=emotion)
         f0_up_key, protect = self._get_rvc_emotion_params(full_text, emotion=emotion)
-        stamp = int(time.time() * 1000)
-        mp3_p = os.path.join(BASE_DIR, f"temp_rvc_{os.getpid()}_{stamp}.mp3")
-        wav_p = os.path.join(BASE_DIR, f"temp_rvc_{os.getpid()}_{stamp}.wav")
+        em = (emotion or "").lower()
+        if "?!" in full_text or full_text.endswith("?"):
+            style_contour = "question"
+        elif "!" in full_text or em in ("sassy_react", "cheer", "clap", "dance", "wave", "happy_hop"):
+            style_contour = "excited"
+        elif em in ("hug", "blush", "headpat", "boop"):
+            style_contour = "soft"
+        elif em in ("stare_smug", "point", "stick"):
+            style_contour = "smug"
+        else:
+            style_contour = "neutral"
+
+        data = None
+        sr = 24000
+        # Prefer local Kokoro-82M (`af_heart`) for much livelier prosody + instant synthesis
         try:
-            comm = edge_tts.Communicate(full_text, self.edge_voice, pitch=pitch, rate=rate)
-            await comm.save(mp3_p)
-            await asyncio.to_thread(mp3_to_wav, mp3_p, wav_p)
-            data, sr = sf.read(wav_p)
-            return await asyncio.to_thread(
-                conv.convert_to_48k_stereo, data, sr, f0_up_key, protect
-            )
-        finally:
-            for p in (mp3_p, wav_p):
-                if os.path.exists(p):
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
+            if os.path.exists(KOKORO_MODEL):
+                k = await asyncio.to_thread(_get_kokoro)
+                style = k.get_voice_style("af_heart")
+                spd = 0.96 if style_contour == "soft" else (1.08 if style_contour == "excited" else 1.03)
+                data, sr = await asyncio.to_thread(k.create, full_text, style, spd, "en-us")
+                # af_heart is adult pitch (~200 Hz) -> shift +4.5 semitones for Gura/Henya/Baelz range
+                f0_up_key += 4.5
+        except Exception:
+            data = None
+
+        if data is None or len(data) == 0:
+            import edge_tts
+            pitch, rate = self._get_neuro_edge_prosody(full_text, emotion=emotion)
+            stamp = int(time.time() * 1000)
+            mp3_p = os.path.join(BASE_DIR, f"temp_rvc_{os.getpid()}_{stamp}.mp3")
+            wav_p = os.path.join(BASE_DIR, f"temp_rvc_{os.getpid()}_{stamp}.wav")
+            try:
+                comm = edge_tts.Communicate(full_text, self.edge_voice, pitch=pitch, rate=rate)
+                await comm.save(mp3_p)
+                await asyncio.to_thread(mp3_to_wav, mp3_p, wav_p)
+                data, sr = sf.read(wav_p)
+            finally:
+                for p in (mp3_p, wav_p):
+                    if os.path.exists(p):
+                        try:
+                            os.remove(p)
+                        except OSError:
+                            pass
+
+        return await asyncio.to_thread(
+            conv.convert_to_48k_stereo, data, sr, f0_up_key, protect, style_contour
+        )
 
     async def _play_rvc(self, text: str, emotion: str | None = None) -> bool:
         try:

@@ -838,12 +838,12 @@ class LunaInVRChat:
     async def gaze_track_loop(self):
         """
         Lightweight ~1.2s local YOLOv8-nano gaze tracker (0 API tokens):
-        keeps Luna's 3D VR head, eyes, and body continuously turned toward you
-        in chill mode instead of staring off into space or wandering!
+        keeps Luna's 3D VR head, eyes, and body continuously turned toward whoever
+        is in front of her (works in BOTH chill and roam modes!).
         """
         while True:
             await asyncio.sleep(1.2)
-            if self.speaking or self.world.snapshot()["mode"] != "chill":
+            if self.speaking:
                 continue
             if self.osc._move_lock.locked():
                 continue
@@ -929,7 +929,9 @@ class LunaInVRChat:
 
             mode = self.world.snapshot()["mode"]
 
-            if mode == "chill":
+            # Stay engaged with the person talking to her for 25s before wandering off
+            in_convo = (time.time() - self.last_user_activity) < 25.0
+            if mode == "chill" or in_convo:
                 # Stay right in place, turn to keep looking at you, and do stationary expressive idles
                 await self._stare_at_speaker(allow_approach=False)
                 action = random.choices(["cutesy_idle", "stare_smug"], weights=[65, 35], k=1)[0]

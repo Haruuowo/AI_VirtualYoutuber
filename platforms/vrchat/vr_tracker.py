@@ -126,7 +126,7 @@ class VirtualVRPoseController:
 
     def set_gaze_offset(self, offset_norm: float):
         """Points her 3D VR head directly toward the detected person (-1.0 left .. +1.0 right)."""
-        self.gaze_yaw_deg = float(max(-28.0, min(28.0, -offset_norm * 24.0)))
+        self.gaze_yaw_deg = float(max(-35.0, min(35.0, -offset_norm * 30.0)))
 
     def set_locomotion(
         self,

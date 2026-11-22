@@ -127,7 +127,13 @@ class RVCv2Converter:
             except Exception:
                 pass
 
-    def _extract_f0(self, audio_16k: np.ndarray, p_len: int, f0_up_key: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+    def _extract_f0(
+        self,
+        audio_16k: np.ndarray,
+        p_len: int,
+        f0_up_key: float = 0.0,
+        style_contour: str = "neutral",
+    ) -> tuple[np.ndarray, np.ndarray]:
         time_step = (self.window / self.sr_in)
         f0_min, f0_max = 50.0, 800.0
         f0_mel_min = 1127.0 * np.log(1.0 + f0_min / 700.0)
@@ -151,6 +157,30 @@ class RVCv2Converter:
         if f0_up_key != 0.0:
             f0 = f0 * (2.0 ** (float(f0_up_key) / 12.0))
 
+        # Add natural expressive pitch inflection on voiced frames so RVC never sounds flat/one-tone
+        voiced = f0 > 0.0
+        if np.any(voiced):
+            idx_v = np.flatnonzero(voiced)
+            prog = np.linspace(0.0, 1.0, len(idx_v), dtype=np.float32)
+            # Amplify natural deviation from speaker mean slightly (1.28x) for livelier melody
+            mean_f0 = float(np.mean(f0[voiced]))
+            f0[voiced] = mean_f0 + (f0[voiced] - mean_f0) * 1.28
+            if style_contour == "question":
+                # Rising question inflection toward end of phrase (+2.2 semitones)
+                semi_curve = -0.3 + 2.5 * (prog ** 2.2)
+            elif style_contour == "excited":
+                # Bouncy VTuber emphasis wave (+1.8 semitones on peaks)
+                semi_curve = 0.6 + 1.4 * np.sin(prog * np.pi * 2.5)
+            elif style_contour == "soft":
+                # Gentle warm rise-fall lilt
+                semi_curve = 0.8 * np.sin(prog * np.pi) - 0.3
+            elif style_contour == "smug":
+                # Playful teasing drop-then-smirk rise
+                semi_curve = -0.6 * np.sin(prog * np.pi) + 1.0 * (prog ** 2.0)
+            else:
+                semi_curve = 0.5 * np.sin(prog * np.pi * 1.5)
+            f0[idx_v] = f0[idx_v] * (2.0 ** (semi_curve / 12.0))
+
         f0bak = f0.copy().astype(np.float32)
         f0_mel = 1127.0 * np.log(1.0 + f0 / 700.0)
         pos = f0_mel > 0
@@ -166,6 +196,7 @@ class RVCv2Converter:
         sr_in: int,
         f0_up_key: float = 0.0,
         protect: float = 0.33,
+        style_contour: str = "neutral",
     ) -> np.ndarray:
         """
         Converts input TTS audio (`samples` at `sr_in` Hz) into Gawr Gura's voice
@@ -214,7 +245,9 @@ class RVCv2Converter:
         p_len = len(audio_pad) // self.window
 
         # 2. Extract F0 Pitch Contour
-        f0_coarse, f0_float = self._extract_f0(audio_pad, p_len, f0_up_key=f0_up_key)
+        f0_coarse, f0_float = self._extract_f0(
+            audio_pad, p_len, f0_up_key=f0_up_key, style_contour=style_contour
+        )
 
         # 3. Extract 768-D ContentVec features via ONNX
         ort_in = audio_pad.reshape(1, 1, -1)
