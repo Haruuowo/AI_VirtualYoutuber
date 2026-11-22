@@ -19,9 +19,17 @@ from collections import deque
 from pathlib import Path
 
 RE_ROOM = re.compile(r"\[Behaviour\] (?:Joining or Creating Room|Entering Room): (.+)")
+RE_WORLD_ID = re.compile(r"\[Behaviour\] Joining (wrld_[^\r\n]+)")
+RE_INVITE_WORLD = re.compile(r"Received Notification: <Notification [^>]*type:\s*invite[^>]*worldId=(wrld_[^,}\s]+)")
 RE_JOIN = re.compile(r"\[Behaviour\] OnPlayerJoined ([^\r\n(]+)")
 RE_LEFT = re.compile(r"\[Behaviour\] OnPlayerLeft ([^\r\n(]+)")
 RE_LOCAL = re.compile(r'Initialized PlayerAPI "([^"]+)" is local')
+
+# Shared Friends+ (~hidden) instance of Kai's Home world so both accounts can join without Invite-Only blocks
+SHARED_DEFAULT_INSTANCE = os.getenv(
+    "VRCHAT_SHARED_INSTANCE",
+    "wrld_79e079c1-9548-48e7-a16e-e4836e1fd922:77777~hidden(usr_2df6f681-876a-43d1-a3ca-4886540811fe)~region(jp)",
+)
 
 
 def log_owner(path: Path) -> str | None:
@@ -63,6 +71,42 @@ def pick_luna_log(folder: Path) -> Path | None:
     return recent[0]
 
 
+def pick_main_user_log(folder: Path) -> Path | None:
+    """Finds your main VRChat account's log file (e.g. DumAlcoholicPa3)."""
+    if not folder.exists():
+        return None
+    main_user = os.getenv("VRCHAT_MAIN_USER", "DumAlcoholicPa3").strip().lower()
+    logs = sorted(folder.glob("output_log_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)[:5]
+    for p in logs:
+        owner = (log_owner(p) or "").lower()
+        if owner == main_user:
+            return p
+    return None
+
+
+def get_target_instance_for_luna(folder: Path | None = None) -> str:
+    """
+    Returns the exact `wrld_...:instance` URL that Luna should join:
+      1. If your main account (DumAlcoholicPa3) is currently in a Friends / Friends+ / Public
+         instance (`not ~private`), returns that exact instance so Luna joins you directly.
+      2. Otherwise returns `SHARED_DEFAULT_INSTANCE` (a Friends+ `~hidden` room where both
+         you and Luna can join freely without needing VR menu invite clicks).
+    """
+    folder = folder or default_vrc_log_dir()
+    main_log = pick_main_user_log(folder)
+    if main_log:
+        try:
+            text = main_log.read_text(encoding="utf-8", errors="ignore")
+            matches = RE_WORLD_ID.findall(text)
+            if matches:
+                latest_world = matches[-1].strip()
+                if "~private(" not in latest_world:
+                    return latest_world
+        except OSError:
+            pass
+    return SHARED_DEFAULT_INSTANCE
+
+
 def default_vrc_log_dir() -> Path:
     appdata = os.getenv("APPDATA", "")
     if appdata:
@@ -81,6 +125,7 @@ class VRChatWorldState:
         self._lock = threading.Lock()
         self.self_name = self_name
         self.world_name: str = "VRChat World"
+        self.current_instance_id: str = ""
         self.players: set[str] = set()
         self.behavior_mode: str = "roam"       # 'roam' (exploring) or 'chill' (staying put)
         self.last_action: str = "looking around"
@@ -189,6 +234,9 @@ async def watch_vrchat_logs(state: VRChatWorldState, on_event, log_dir: Path | N
                     m_room = RE_ROOM.search(line)
                     if m_room:
                         state.set_world(m_room.group(1))
+                    m_wid = RE_WORLD_ID.search(line)
+                    if m_wid:
+                        state.current_instance_id = m_wid.group(1).strip()
                     m_join = RE_JOIN.search(line)
                     if m_join:
                         state.player_joined(m_join.group(1))
@@ -204,6 +252,13 @@ async def watch_vrchat_logs(state: VRChatWorldState, on_event, log_dir: Path | N
                         world = m_room.group(1).strip()
                         state.set_world(world)
                         await on_event("world_change", world)
+                    m_wid = RE_WORLD_ID.search(line)
+                    if m_wid:
+                        state.current_instance_id = m_wid.group(1).strip()
+                    m_inv = RE_INVITE_WORLD.search(line)
+                    if m_inv:
+                        invited_world = m_inv.group(1).strip()
+                        await on_event("invite_received", invited_world)
                     m_join = RE_JOIN.search(line)
                     if m_join:
                         player = m_join.group(1).strip()
@@ -213,6 +268,16 @@ async def watch_vrchat_logs(state: VRChatWorldState, on_event, log_dir: Path | N
                     if m_left:
                         state.player_left(m_left.group(1).strip())
                     line = file_obj.readline()
+
+            # Also check if your main account (DumAlcoholicPa3) moved to a new joinable room
+            main_world = await asyncio.to_thread(get_target_instance_for_luna, folder)
+            if (
+                main_world
+                and state.current_instance_id
+                and main_world != state.current_instance_id
+                and "~private(" not in main_world
+            ):
+                await on_event("follow_main_user", main_world)
 
             await asyncio.sleep(1.0)
     finally:
