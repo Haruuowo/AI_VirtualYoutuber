@@ -17,3 +17,4 @@ ultralytics
 kokoro-onnx
 pycaw
 psutil
+rapidocr-onnxruntime

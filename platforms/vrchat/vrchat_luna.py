@@ -44,6 +44,7 @@ from platforms.vrchat.vision import (  # noqa: E402
     capture_luna_vrchat_frame,
     is_facing_blank_wall,
     is_visual_question,
+    read_chatbox_bubbles,
     track_target_person,
 )
 from platforms.vrchat.world_watcher import (  # noqa: E402
@@ -369,6 +370,8 @@ class LunaInVRChat:
         self.last_auto_travel = 0.0
         self.autonomy_enabled = not getattr(args, "no_autonomy", False)
         self._muted_luna_pids: set[int] = set()
+        self._recent_self_replies: list[str] = []
+        self._seen_chatboxes: dict[str, float] = {}
         # VRChat Talk-Gate Toggle: when True, Luna ONLY hears you when you talk in VRChat (Hold V or unmute in VRChat).
         # Press F8 anytime (or type 'toggle' in console) to switch between VRC-Talk-Only and Always-Listen!
         self.vrc_talk_only = not getattr(args, "always_listen", False)
@@ -594,6 +597,10 @@ class LunaInVRChat:
             if chosen_action in self._ROAM_ONLY_ACTIONS:
                 chosen_action = "stare_smug"
         self.world.record_action(chosen_action)
+        norm_reply = "".join(ch for ch in reply.lower() if ch.isalnum())
+        if norm_reply:
+            self._recent_self_replies.append(norm_reply)
+            self._recent_self_replies = self._recent_self_replies[-8:]
         print(f"{tag} [{chosen_action}] > {reply}")
 
         self.speaking = True
@@ -716,6 +723,67 @@ class LunaInVRChat:
                 continue
             try:
                 await self._stare_at_speaker(allow_approach=False)
+            except Exception:
+                pass
+
+    async def chatbox_watch_loop(self):
+        """
+        Reads floating VRChat chatbox bubbles via local RapidOCR (~1.6s, 0 VRAM, 0 API tokens)
+        so muted friends who talk through the VRChat chatbox can converse with Luna directly!
+        """
+        pending_text = ""
+        pending_hits = 0
+        while True:
+            await asyncio.sleep(1.6)
+            if self.speaking:
+                continue
+            try:
+                img = await asyncio.to_thread(capture_luna_vrchat_frame, 854, 480, False)
+                if img is None:
+                    continue
+                bubbles = await asyncio.to_thread(read_chatbox_bubbles, img)
+                if not bubbles:
+                    pending_text = ""
+                    pending_hits = 0
+                    continue
+
+                now = time.time()
+                # Prune old seen bubbles after 25s
+                self._seen_chatboxes = {k: ts for k, ts in self._seen_chatboxes.items() if now - ts < 25.0}
+                players_norm = {"".join(c for c in p.lower() if c.isalnum()) for p in self.world.snapshot()["players"]}
+
+                chosen = None
+                for b in bubbles:
+                    norm = "".join(c for c in b.lower() if c.isalnum())
+                    if not norm or norm in players_norm:
+                        continue
+                    if any(norm in self_r or self_r in norm for self_r in self._recent_self_replies):
+                        continue
+                    if norm in self._seen_chatboxes:
+                        continue
+                    chosen = (norm, b)
+                    break
+
+                if not chosen:
+                    pending_text = ""
+                    pending_hits = 0
+                    continue
+
+                norm, raw_text = chosen
+                if norm == pending_text:
+                    pending_hits += 1
+                else:
+                    pending_text = norm
+                    pending_hits = 1
+
+                # Require 2 consecutive reads so we don't reply to half-typed bubbles or single-frame flicker
+                if pending_hits >= 2:
+                    self._seen_chatboxes[norm] = now
+                    pending_text = ""
+                    pending_hits = 0
+                    print(f"\n[chatbox-eye] Read friend's chatbox: {raw_text}")
+                    self.osc.typing(True)
+                    self.push("VRChat Friend (Chatbox)", raw_text, True)
             except Exception:
                 pass
 
@@ -884,6 +952,7 @@ class LunaInVRChat:
             self.start_all_ears()
         asyncio.create_task(self.console_loop())
         asyncio.create_task(self.gaze_track_loop())
+        asyncio.create_task(self.chatbox_watch_loop())
         if self.autonomy_enabled:
             asyncio.create_task(self.body_loop())
             asyncio.create_task(self.mind_loop())

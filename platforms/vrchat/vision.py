@@ -152,11 +152,11 @@ def _capture_hwnd_printwindow(hwnd: int, width: int, height: int) -> Image.Image
         user32.ReleaseDC(hwnd, hwnd_dc)
 
 
-def capture_luna_vrchat_frame(max_w: int = 384, max_h: int = 216) -> Image.Image | None:
+def capture_luna_vrchat_frame(max_w: int = 384, max_h: int = 216, save_debug: bool = True) -> Image.Image | None:
     """
     Captures Luna's VRChat window (prefers the smaller VRChat window when two are open),
-    saves a debug copy to `platforms/vrchat/last_eye_view.jpg`, and returns a 384x216 PIL Image
-    (~650 vision tokens instead of 2,263 so it never hits Groq's 7,000 ITPM rate limit!).
+    saves a debug copy to `platforms/vrchat/last_eye_view.jpg`, and returns a resized PIL Image
+    (default 384x216 for low-token Vision LLM calls, or 854x480 for crisp OCR).
     """
     wins = find_vrchat_windows()
     if not wins:
@@ -177,10 +177,11 @@ def capture_luna_vrchat_frame(max_w: int = 384, max_h: int = 216) -> Image.Image
             return None
 
     resized = img.resize((max_w, max_h), Image.Resampling.BILINEAR)
-    try:
-        resized.save(DEBUG_FRAME_PATH, format="JPEG", quality=78)
-    except Exception:
-        pass
+    if save_debug:
+        try:
+            resized.save(DEBUG_FRAME_PATH, format="JPEG", quality=78)
+        except Exception:
+            pass
     return resized
 
 
@@ -535,6 +536,104 @@ class VRChatVision:
             self.last_steer = steer
             self.last_seen_ts = time.time()
         return {"scene": scene, "steer": steer, "wall": wall}
+
+
+_OCR_ENGINE = None
+_OCR_LOCK = threading.Lock()
+
+_UI_NOISE_TEXTS = {
+    "visitor", "new user", "user", "known user", "trusted user", "nuisance",
+    "friends", "friend", "vrchat", "menu", "mute", "unmute", "fps", "ping",
+    "...", "..", ".", "afk", "loading", "offline", "online",
+}
+_SHORT_VALID_CHAT = {"hi", "hey", "yo", "sup", "bye", "yes", "no", "ok", "okay", "lol", "lmao", "wut", "why", "who", "how"}
+
+
+def _get_ocr():
+    """Lazy-loads local RapidOCR (ONNXRuntime CPU, 0 VRAM, 0 API tokens)."""
+    global _OCR_ENGINE
+    if _OCR_ENGINE is not None:
+        return _OCR_ENGINE
+    with _OCR_LOCK:
+        if _OCR_ENGINE is None:
+            from rapidocr_onnxruntime import RapidOCR
+            _OCR_ENGINE = RapidOCR()
+    return _OCR_ENGINE
+
+
+def read_chatbox_bubbles(img: Image.Image) -> list[str]:
+    """
+    Detects and reads VRChat floating chatbox bubbles (white text inside dark rounded
+    rectangles) from an 854x480 capture of Luna's VRChat window.
+    """
+    if img is None:
+        return []
+    arr = np.asarray(img)
+    h, w, _ = arr.shape
+    # Crop out bottom 14% HUD strip
+    crop = arr[: int(h * 0.86), :, :]
+    gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+
+    try:
+        ocr = _get_ocr()
+        result, _ = ocr(crop)
+    except Exception:
+        return []
+
+    if not result:
+        return []
+
+    lines: list[tuple[float, float, str]] = []
+    for item in result:
+        box, text, conf = item[0], str(item[1]).strip(), float(item[2])
+        if conf < 0.62 or not text:
+            continue
+        low = re.sub(r"\s+", " ", text).strip().lower()
+        if low in _UI_NOISE_TEXTS or set(low) <= {".", " ", "-", "_"}:
+            continue
+
+        xs = [int(pt[0]) for pt in box]
+        ys = [int(pt[1]) for pt in box]
+        x1 = max(0, min(xs) - 6)
+        x2 = min(w, max(xs) + 6)
+        y1 = max(0, min(ys) - 6)
+        y2 = min(crop.shape[0], max(ys) + 6)
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        patch = gray[y1:y2, x1:x2]
+        # VRChat chatbox signature: bright white text (p95 > 185) on dark translucent bubble (p25 < 105)
+        if float(np.percentile(patch, 95)) < 185.0 or float(np.percentile(patch, 25)) > 105.0:
+            continue
+
+        lines.append((float(min(ys)), float(min(xs)), text))
+
+    if not lines:
+        return []
+
+    # Merge vertically adjacent lines belonging to the same multi-line chatbox bubble
+    lines.sort(key=lambda it: (it[0], it[1]))
+    bubbles: list[str] = []
+    cur_y, cur_x, cur_txt = lines[0]
+    for y, x, txt in lines[1:]:
+        if abs(y - cur_y) <= 28.0 and abs(x - cur_x) <= 90.0:
+            cur_txt = f"{cur_txt} {txt}"
+            cur_y = y
+        else:
+            bubbles.append(cur_txt)
+            cur_y, cur_x, cur_txt = y, x, txt
+    bubbles.append(cur_txt)
+
+    clean_bubbles: list[str] = []
+    for b in bubbles:
+        b = re.sub(r"\s+", " ", b).strip()
+        low = b.lower()
+        if low in _UI_NOISE_TEXTS:
+            continue
+        if len(b) < 4 and low not in _SHORT_VALID_CHAT:
+            continue
+        clean_bubbles.append(b)
+    return clean_bubbles
 
 
 def is_visual_question(text: str) -> bool:
