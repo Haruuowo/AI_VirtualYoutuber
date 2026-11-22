@@ -176,6 +176,38 @@ class VRChatOSC:
         btn = "/input/LookRight" if s > 0 else "/input/LookLeft"
         await self._ramp_axes([("/input/LookHorizontal", s)], duration, buttons=[btn])
 
+    async def steer_walk(
+        self,
+        vertical: float = 0.0,
+        horizontal: float = 0.0,
+        turn: float = 0.0,
+        duration: float = 0.45,
+        run: bool = False,
+    ):
+        """
+        Walks AND smoothly steers/curves at the same time (left stick + right stick simultaneously),
+        so Luna can naturally curve around and follow a moving player instead of only walking straight.
+        """
+        self.set_param("VRCEmote", 0)
+        self.set_param("DoingEmote", False)
+        axes: list[tuple[str, float]] = []
+        buttons: list[str] = []
+        if abs(vertical) > 0.02:
+            v = float(max(-1.0, min(1.0, vertical)))
+            axes.append(("/input/Vertical", v))
+            buttons.append("/input/MoveForward" if v > 0 else "/input/MoveBackward")
+        if abs(horizontal) > 0.02:
+            h = float(max(-1.0, min(1.0, horizontal)))
+            axes.append(("/input/Horizontal", h))
+            buttons.append("/input/MoveRight" if h > 0 else "/input/MoveLeft")
+        if abs(turn) > 0.02:
+            t = float(max(-1.0, min(1.0, turn)))
+            axes.append(("/input/LookHorizontal", t))
+            buttons.append("/input/LookRight" if t > 0 else "/input/LookLeft")
+        if not axes:
+            return
+        await self._ramp_axes(axes, duration, run=run, buttons=buttons)
+
     async def jump(self):
         """Taps the jump input (both native Oculus Touch 'A' button and OSC /input/Jump)."""
         if self.use_vr:
@@ -251,9 +283,9 @@ class VRChatOSC:
         eye_yaw = float(max(-20.0, min(20.0, offset * 18.0)))
         self.vr_tracker.set_gaze_target(offset, offset_y)
         self.set_eyes(pitch=eye_pitch, yaw=eye_yaw, closed=0.14)
-        if abs(offset) > 0.26:
-            speed = 0.32 if offset > 0 else -0.32
-            dur = min(0.42, max(0.10, (abs(offset) - 0.12) * 0.34))
+        if abs(offset) > 0.24:
+            speed = 0.48 if offset > 0 else -0.48
+            dur = min(0.45, max(0.12, (abs(offset) - 0.10) * 0.38))
             await self.turn(speed=speed, duration=dur)
             # Keep natural residual neck + eye lead toward target instead of snapping to 0
             self.vr_tracker.set_gaze_target(offset * 0.35, offset_y)
@@ -512,6 +544,11 @@ def detect_movement_request(text: str) -> tuple[str | None, str | None]:
     ):
         return ("chill", "stop")
     if re.search(
+        r"\b(follow|follow me|come with me|walk with me|stay behind me|come here|come to me|let'?s go)\b",
+        low,
+    ):
+        return ("follow", None)
+    if re.search(
         r"\b(roam|wander|explore|walk around|move around|do what you want|be free|"
         r"you'?re free|go explore|have freedom)\b",
         low,
@@ -547,7 +584,7 @@ def detect_movement_request(text: str) -> tuple[str | None, str | None]:
         return (None, "stick")
 
     # Direct physical locomotion requests
-    if re.search(r"\b(come here|walk forward|step forward|closer|follow|follow me|come to me|let'?s go)\b", low):
+    if re.search(r"\b(walk forward|step forward|closer)\b", low):
         return (None, "walk_forward")
     if re.search(r"\b(back up|step back|move back|go back)\b", low):
         return (None, "walk_back")

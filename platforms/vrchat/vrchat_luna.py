@@ -151,6 +151,7 @@ def _configure_vrchat_registry_for_luna():
         winreg.SetValueEx(k, "VRC_MAIN_MENU_MOVEMENT_LOCKED_h1046269715", 0, winreg.REG_DWORD, 0)
         winreg.SetValueEx(k, "UI.Settings.Osc_h1043380067", 0, winreg.REG_DWORD, 1)
         winreg.SetValueEx(k, "VRC_INPUT_OSC_h1104161515", 0, winreg.REG_DWORD, 1)
+        winreg.SetValueEx(k, "VRC_INPUT_COMFORT_TURNING_h2182102264", 0, winreg.REG_DWORD, 0)
         winreg.SetValueEx(k, "VRC_INPUT_MIC_NOISE_SUPPRESSION_h2093770996", 0, winreg.REG_DWORD, 0)
         cable_bytes = b"CABLE Output (VB-Audio Virtual Cable)\x00"
         real_mic_bytes = b"Microphone Array (Realtek(R) Audio)\x00"
@@ -768,9 +769,11 @@ class LunaInVRChat:
 
     async def _stare_at_speaker(self, allow_approach: bool = False) -> bool:
         """
-        Uses local YOLOv8-nano + VRChat nametag pill detector (<20ms, 0 API tokens)
-        to spot an actual player in view and smoothly aim Luna's eyes, 3D VR neck
-        (yaw + pitch), and body toward their face.
+        Closed-loop local YOLOv8-nano + VRChat nametag 2D tracker (<20ms, 0 API tokens):
+        smoothly aims Luna's eyes, 3D VR neck (yaw + pitch), and body toward whoever
+        she sees. When `allow_approach=True`, she curves and walks smoothly toward them
+        using simultaneous forward + turn steering (`steer_walk`) instead of walking
+        in a blind straight line, and stops at comfortable chat distance.
         """
         frame = await asyncio.to_thread(capture_luna_vrchat_frame, 640, 360, False)
         if frame is None:
@@ -781,11 +784,27 @@ class LunaInVRChat:
             return False
 
         self._last_person_seen_ts = time.time()
+        self._last_seen_offset_x = offset_x
+
+        eye_pitch = float(max(-16.0, min(18.0, -offset_y * 14.0)))
+        eye_yaw = float(max(-20.0, min(20.0, offset_x * 18.0)))
+        self.osc.vr_tracker.set_gaze_target(offset_x, offset_y)
+        self.osc.set_eyes(pitch=eye_pitch, yaw=eye_yaw, closed=0.14)
+
+        if allow_approach:
+            if height_ratio < 0.50:
+                # Smoothly curve toward the person while walking (simultaneous forward + turn!)
+                turn_cmd = float(max(-0.72, min(0.72, offset_x * 0.95))) if abs(offset_x) > 0.12 else 0.0
+                # Slow down forward speed when turning sharply so she curves cleanly instead of overshooting
+                fwd_cmd = 0.72 if abs(offset_x) < 0.45 else 0.35
+                await self.osc.steer_walk(vertical=fwd_cmd, turn=turn_cmd, duration=0.45)
+                return True
+            if height_ratio > 0.84:
+                # Too close / inside personal space — gently step back while keeping eye contact
+                await self.osc.steer_walk(vertical=-0.42, turn=0.0, duration=0.35)
+                return True
+
         await self.osc.lock_gaze_on_offset(offset_x, offset_y)
-
-        if allow_approach and height_ratio < 0.45 and abs(offset_x) <= 0.34:
-            await self.osc.move(vertical=0.72, duration=1.0)
-
         return True
 
     async def respond(self, user: str, text: str):
@@ -802,9 +821,9 @@ class LunaInVRChat:
             self.world.set_behavior(mode_change, requested_action or mode_change)
             print(f"[autonomy] behavior mode -> {mode_change.upper()}")
 
-        # Turn/approach visible avatar while thinking of her reply (approaches in roam mode!)
-        is_roam = self.world.snapshot()["mode"] == "roam"
-        stare_task = asyncio.create_task(self._stare_at_speaker(allow_approach=is_roam))
+        # Turn/approach visible avatar while thinking of her reply (approaches in roam & follow modes!)
+        is_following = self.world.snapshot()["mode"] in ("roam", "follow")
+        stare_task = asyncio.create_task(self._stare_at_speaker(allow_approach=is_following))
 
         # Only call cloud vision when you ask a visual question ("what do you see?", "look at my avatar")
         # or if she hasn't looked in 45s — saves vision tokens and keeps replies fast (<0.8s)!
@@ -833,15 +852,18 @@ class LunaInVRChat:
 
     async def gaze_track_loop(self):
         """
-        Fast ~0.45s local YOLOv8-nano + nametag 2D gaze tracker (0 API tokens):
-        keeps Luna's eyes, 3D VR neck (horizontal + vertical face tracking), and
-        body naturally following whoever is in front of her, with organic blinks
-        and smooth gaze return when nobody is visible.
+        Fast ~0.40s closed-loop 2D gaze & person-following loop (0 API tokens):
+        - Keeps Luna's eyes and 3D VR neck (horizontal + vertical) locked onto whoever she sees.
+        - In FOLLOW mode (or in ROAM mode while actively chatting with someone), smoothly curves
+          and walks after them (`steer_walk`) as they move around!
+        - If the person walks off the left or right edge of her view, turns in their last-seen
+          direction to re-acquire them instead of blindly walking straight.
         """
         self._last_person_seen_ts = 0.0
+        self._last_seen_offset_x = 0.0
         next_blink_ts = time.time() + random.uniform(3.2, 5.8)
         while True:
-            await asyncio.sleep(0.45)
+            await asyncio.sleep(0.40)
             now = time.time()
             # Natural periodic blinking so her eyes look alive while staring
             if now >= next_blink_ts and not self.speaking:
@@ -853,11 +875,20 @@ class LunaInVRChat:
             if self.speaking or self.osc._move_lock.locked():
                 continue
             try:
-                saw = await self._stare_at_speaker(allow_approach=False)
-                if not saw and (now - self._last_person_seen_ts > 3.5):
-                    # Gently relax neck & eyes back toward neutral forward
-                    self.osc.vr_tracker.set_gaze_target(0.0, 0.0)
-                    self.osc.set_eyes(pitch=-1.5, yaw=0.0, closed=0.15)
+                mode = self.world.snapshot()["mode"]
+                recent_chat = (now - self.last_user_activity) < 90.0
+                should_follow = (mode == "follow") or (mode == "roam" and recent_chat)
+                saw = await self._stare_at_speaker(allow_approach=should_follow)
+                if not saw:
+                    lost_for = now - self._last_person_seen_ts
+                    if should_follow and self._last_person_seen_ts > 0.0 and 0.6 < lost_for < 8.5:
+                        # Person walked out of frame — turn toward the last side we saw them on!
+                        search_dir = 1.0 if self._last_seen_offset_x >= 0.0 else -1.0
+                        await self.osc.turn(speed=0.55 * search_dir, duration=0.35)
+                    elif lost_for > 3.5:
+                        # Gently relax neck & eyes back toward neutral forward
+                        self.osc.vr_tracker.set_gaze_target(0.0, 0.0)
+                        self.osc.set_eyes(pitch=-1.5, yaw=0.0, closed=0.15)
             except Exception:
                 pass
 
@@ -942,22 +973,30 @@ class LunaInVRChat:
                 # Stay right in place, keep natural eye/neck contact, and avoid robotic pose cycling
                 await self._stare_at_speaker(allow_approach=False)
                 action = random.choices(["cutesy_idle", "stare_smug"], weights=[75, 25], k=1)[0]
+            elif mode == "follow":
+                # Active follow mode is driven continuously by gaze_track_loop(); don't wander away!
+                if time.time() - getattr(self, "_last_person_seen_ts", 0.0) < 10.0:
+                    continue
+                action = random.choice(["turn_left", "turn_right"])
             else:
-                # If a player is visible in front of her, stay naturally focused on them instead of wandering away!
-                saw_player = await self._stare_at_speaker(allow_approach=True)
-                if saw_player:
+                # If a player is visible (or was just being followed), stay focused on them instead of wandering away!
+                if time.time() - getattr(self, "_last_person_seen_ts", 0.0) < 8.0:
                     action = random.choices(["cutesy_idle", "stare_smug"], weights=[70, 30], k=1)[0]
                 else:
-                    frame = await asyncio.to_thread(capture_luna_vrchat_frame)
-                    if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
-                        action = random.choice(["turn_left", "turn_right"])
-                        print(f"[eyes] wall ahead (OpenCV) -> {action}")
+                    saw_player = await self._stare_at_speaker(allow_approach=True)
+                    if saw_player:
+                        action = random.choices(["cutesy_idle", "stare_smug"], weights=[70, 30], k=1)[0]
                     else:
-                        action = random.choices(
-                            ["turn_left", "turn_right", "wander_step", "look_around"],
-                            weights=[30, 30, 25, 15],
-                            k=1,
-                        )[0]
+                        frame = await asyncio.to_thread(capture_luna_vrchat_frame)
+                        if frame is not None and await asyncio.to_thread(is_facing_blank_wall, frame):
+                            action = random.choice(["turn_left", "turn_right"])
+                            print(f"[eyes] wall ahead (OpenCV) -> {action}")
+                        else:
+                            action = random.choices(
+                                ["turn_left", "turn_right", "wander_step", "look_around"],
+                                weights=[30, 30, 25, 15],
+                                k=1,
+                            )[0]
 
             self.world.record_action(action)
             try:
