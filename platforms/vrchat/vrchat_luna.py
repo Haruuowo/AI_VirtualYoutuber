@@ -645,7 +645,7 @@ class LunaInVRChat:
                     if channels > 1:
                         arr = arr.reshape(-1, channels).mean(axis=1).astype(np.int16)
                     rms = float(np.sqrt(np.mean((arr.astype(np.float32) / 32768.0) ** 2))) if len(arr) else 0.0
-                    if rms > 0.012:
+                    if rms > 0.015:
                         if not in_speech:
                             in_speech = True
                             speech_start_ts = now
@@ -654,8 +654,9 @@ class LunaInVRChat:
                         buf.append(arr)
                     elif in_speech:
                         buf.append(arr)
-                        if (now - last_voice_ts >= 0.55) or (now - speech_start_ts >= 7.0):
-                            if len(buf) >= 4:
+                        # Wait 0.95s of silence so she doesn't cut people off mid-sentence
+                        if (now - last_voice_ts >= 0.95) or (now - speech_start_ts >= 7.5):
+                            if len(buf) >= 5:
                                 pcm = np.concatenate(buf).tobytes()
                                 try:
                                     utt_q.put_nowait(pcm)
@@ -677,9 +678,17 @@ class LunaInVRChat:
                 stream.start_stream()
                 print(f"[world-ears] Auto-listening to VRChat friends via WASAPI Loopback: '{loopback['name']}'")
 
+                last_world_reply_ts = 0.0
+                self_names = {
+                    HOST_NAME.lower(),
+                    os.getenv("VRCHAT_MAIN_USER", "DumAlcoholicPa3").strip().lower(),
+                    os.getenv("VRCHAT_LUNA_USER", "kairu!").strip().lower(),
+                    "kairuǃ",
+                }
                 while True:
                     pcm = utt_q.get()
-                    if self.speaking or (time.time() - self._last_speak_end_ts < 1.6):
+                    now = time.time()
+                    if self.speaking or (now - self._last_speak_end_ts < 2.2):
                         continue
                     try:
                         audio_data = sr.AudioData(pcm, sample_rate=rate, sample_width=2)
@@ -689,8 +698,40 @@ class LunaInVRChat:
                         norm = "".join(ch for ch in text.lower() if ch.isalnum())
                         if norm and any(norm in r or r in norm for r in self._recent_self_replies):
                             continue
-                        players = [p for p in self.world.snapshot()["players"] if p.lower() != HOST_NAME.lower()]
-                        who = f"Nearby Player ({', '.join(players[:2])})" if players else "VRChat Friend"
+
+                        low = text.lower().strip()
+                        words = low.split()
+                        called_luna = any(w in low for w in ("luna", "kairu", "hey ai", "ai bot", "vtuber"))
+                        addressed = called_luna or ("?" in text) or any(
+                            w in words for w in ("you", "your", "you're", "hello", "hi", "hey", "follow", "dance", "wave")
+                        )
+
+                        # Don't jump in on tiny background noise or interrupt everyone's side conversations
+                        if not called_luna and len(words) < 3:
+                            continue
+                        since_spoke = now - max(self._last_speak_end_ts, last_world_reply_ts)
+                        if called_luna:
+                            if since_spoke < 2.0:
+                                continue
+                        elif addressed:
+                            if since_spoke < 8.5:
+                                continue
+                        else:
+                            # Side chatter not directed at Luna: only chime in occasionally after a 15s pause
+                            if since_spoke < 15.0 or random.random() > 0.25:
+                                continue
+
+                        # Natural brief pause before jumping in so she doesn't cut people off
+                        time.sleep(0.55)
+                        if self.speaking:
+                            continue
+
+                        players = [
+                            p for p in self.world.snapshot()["players"]
+                            if p.strip().lower() not in self_names
+                        ]
+                        who = f"Other Player ({', '.join(players[:2])})" if players else "Another VRChat Player"
+                        last_world_reply_ts = time.time()
                         print(f"\n[world-ears heard {who}] {text}")
                         self.osc.typing(True)
                         self.push(who, text, True)

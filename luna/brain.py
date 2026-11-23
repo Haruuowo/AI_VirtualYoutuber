@@ -234,7 +234,12 @@ class AIHandler:
             messages.append({"role": "user", "content": query_str})
         else:
             self.long_term_memory.maybe_remember(username, query_str)
-            self.memory.append({"role": "user", "content": f"{username} ({platform}): {message}"})
+            host_name = os.getenv("VRCHAT_HOST_NAME", "Kai").strip().lower()
+            if str(username).strip().lower() == host_name:
+                speaker_tag = f"{username} (your creator, {platform})"
+            else:
+                speaker_tag = f"{username} (another VRChat player — NOT Kai, {platform})"
+            self.memory.append({"role": "user", "content": f"{speaker_tag}: {message}"})
             messages = self._build_messages(full_system)
 
         try:
