@@ -109,7 +109,7 @@ class SassyDatasetRetriever:
         examples = self.retrieve_examples(query, top_k=2, random_anchors=1)
         if not examples:
             return ""
-        lines = ["[SASSY & SMUG STYLE EXAMPLES (match this sharp, deadpan, teasing energy):]"]
+        lines = ["[PLAYFUL & WITTY STYLE EXAMPLES (keep it lighthearted, fun, and friendly, never mean):]"]
         for ex in examples:
             act = ex.get("action", "stare_smug")
             lines.append(f"- User: \"{ex['instruction']}\" -> Luna: \"[action:{act}] {ex['output']}\"")
@@ -120,9 +120,14 @@ class PersistentMemory:
     """Lightweight JSON-backed episodic memory for facts about Kai & VRChat players."""
 
     _FACT_PATTERNS = re.compile(
-        r"\b(my name is|call me|i love|i hate|i like|my favorite|remember that|don't forget|i am studying|i work on|i'm from)\b",
+        r"\b(my name is|call me|i'm |i am |i love|i hate|i like|i play|my favorite|my friend|remember that|don't forget|i am studying|i work on|i'm from|this is my friend)\b",
         re.IGNORECASE,
     )
+
+    _IGNORE_FRIEND_NAMES = {
+        "kai", "system", "vrchat friend", "another vrchat player",
+        "vrchat friend (chatbox)", "dumalcoholicpa3", "kairu!", "kairuǃ", "luna",
+    }
 
     def __init__(self, path: Path = MEMORY_PATH):
         self.path = path
@@ -139,16 +144,38 @@ class PersistentMemory:
     def _save(self):
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(self.facts[-60:], indent=2, ensure_ascii=False), encoding="utf-8")
+            self.path.write_text(json.dumps(self.facts[-80:], indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
+
+    def remember_friend(self, name: str, world: str = "", note: str = ""):
+        """Persistently remembers a VRChat friend's name (and where/what we chatted about)."""
+        clean = (name or "").strip()
+        if not clean or clean.lower() in self._IGNORE_FRIEND_NAMES:
+            return
+        if clean.lower().startswith(("other player", "nearby player")):
+            return
+        detail = f"met in {world}" if world else "VRChat friend of Kai"
+        if note:
+            detail = f"{detail}; {note[:90]}"
+        entry = f"Friend {clean}: {detail}"
+        # Update existing friend entry or append new one
+        for f in self.facts:
+            if f.get("friend", "").lower() == clean.lower():
+                if note:
+                    f["fact"] = entry
+                f["ts"] = int(time.time())
+                self._save()
+                return
+        self.facts.append({"user": clean, "friend": clean, "fact": entry, "ts": int(time.time())})
+        self._save()
 
     def maybe_remember(self, user: str, message: str):
         """Automatically saves notable personal facts or explicit 'remember' statements."""
         if not message or user == "System" or message.startswith("[System:"):
             return
         clean = message.strip()
-        if len(clean) < 6 or len(clean) > 180:
+        if len(clean) < 5 or len(clean) > 180:
             return
         if self._FACT_PATTERNS.search(clean):
             entry = f"{user}: {clean}"

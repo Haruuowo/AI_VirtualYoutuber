@@ -645,7 +645,7 @@ class LunaInVRChat:
                     if channels > 1:
                         arr = arr.reshape(-1, channels).mean(axis=1).astype(np.int16)
                     rms = float(np.sqrt(np.mean((arr.astype(np.float32) / 32768.0) ** 2))) if len(arr) else 0.0
-                    if rms > 0.015:
+                    if rms > 0.009:
                         if not in_speech:
                             in_speech = True
                             speech_start_ts = now
@@ -714,7 +714,7 @@ class LunaInVRChat:
                             if since_spoke < 2.0:
                                 continue
                         elif addressed:
-                            if since_spoke < 8.5:
+                            if since_spoke < 5.0:
                                 continue
                         else:
                             # Side chatter not directed at Luna: only chime in occasionally after a 15s pause
@@ -730,6 +730,9 @@ class LunaInVRChat:
                             p for p in self.world.snapshot()["players"]
                             if p.strip().lower() not in self_names
                         ]
+                        world_name = self.world.snapshot().get("world", "")
+                        for p_name in players[:2]:
+                            self.ai.long_term_memory.remember_friend(p_name, world=world_name)
                         who = f"Other Player ({', '.join(players[:2])})" if players else "Another VRChat Player"
                         last_world_reply_ts = time.time()
                         print(f"\n[world-ears heard {who}] {text}")
@@ -1147,6 +1150,7 @@ class LunaInVRChat:
 
         elif kind == "player_join":
             print(f"\n[vrchat] Player joined: {value}")
+            self.ai.long_term_memory.remember_friend(value, world=self.world.snapshot().get("world", ""))
             now = time.time()
             if now - self.last_join_greet < 25.0 or self.speaking:
                 return
