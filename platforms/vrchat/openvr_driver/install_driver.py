@@ -63,6 +63,20 @@ def ensure_steamvr_chaperone():
         chap_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
         print(f"[install] Wrote calibrated Standing Chaperone -> {chap_path}")
 
+    # Also ensure SteamVR Safe Mode never blocks driver_luna after an abrupt restart
+    vrsettings_path = STEAM_CONFIG_DIR / "steamvr.vrsettings"
+    if vrsettings_path.exists():
+        try:
+            cfg = json.loads(vrsettings_path.read_text(encoding="utf-8"))
+            luna_sec = cfg.setdefault("driver_luna", {})
+            if luna_sec.get("blocked_by_safe_mode") or not luna_sec.get("enable", True):
+                luna_sec["blocked_by_safe_mode"] = False
+                luna_sec["enable"] = True
+                vrsettings_path.write_text(json.dumps(cfg, indent=3), encoding="utf-8")
+                print("[install] Cleared SteamVR Safe Mode block on driver_luna")
+        except Exception:
+            pass
+
 
 def install():
     if not DLL_SRC.exists():
